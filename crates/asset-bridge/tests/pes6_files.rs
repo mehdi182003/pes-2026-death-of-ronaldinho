@@ -228,3 +228,40 @@ fn models_parse_with_consistent_draws() {
     eprintln!("modèles : {read} lus, {unknown_opcodes} avec une instruction inconnue");
     assert!(unknown_opcodes * 50 < read, "{read} / {unknown_opcodes}");
 }
+
+#[test]
+fn referee_loads_textured_at_a_plausible_size() {
+    let Some(dir) = game_dir(Game::Pes6) else {
+        return;
+    };
+    let pes = Pes6::open(&dir).unwrap();
+    let texture = pes.load_texture(&"0_text:432".parse().unwrap()).unwrap();
+    assert_eq!((texture.width, texture.height), (512, 256));
+    let model = pes
+        .load_model(&"0_text:431".parse().unwrap(), Some(&texture.name))
+        .unwrap();
+    assert!(model.triangle_count() > 1000, "{}", model.triangle_count());
+    let heights = model
+        .meshes
+        .iter()
+        .flat_map(|m| m.positions.iter().map(|p| p[1]));
+    let (low, high) = heights.fold((f32::MAX, f32::MIN), |(lo, hi), y| (lo.min(y), hi.max(y)));
+    // Feet at 0, head at 756 units: 1.80 m (retarget::PES6_UNITS_PER_METRE).
+    assert!(
+        low.abs() < 1.0 && (high - 756.0).abs() < 2.0,
+        "{low} .. {high}"
+    );
+    // Texture coordinates: within the texture, apart from a few that make
+    // it repeat (v up to 1.5 on the demo's referee).
+    let uvs: Vec<[f32; 2]> = model
+        .meshes
+        .iter()
+        .flat_map(|m| m.uvs.iter().flatten().copied())
+        .collect();
+    let outside = uvs
+        .iter()
+        .filter(|uv| !uv.iter().all(|c| (-0.01..=1.01).contains(c)))
+        .count();
+    assert!(outside * 10 < uvs.len(), "{outside} / {}", uvs.len());
+    assert!(uvs.iter().flatten().all(|c| c.abs() < 4.0));
+}

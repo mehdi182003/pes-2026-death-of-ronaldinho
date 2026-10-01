@@ -11,6 +11,12 @@ use std::f32::consts::FRAC_1_SQRT_2;
 /// forward is -Z, Bevy's forward. Both worlds use metres.
 pub const VICE_CITY_TO_Y_UP: [f32; 4] = [-FRAC_1_SQRT_2, 0.0, 0.0, FRAC_1_SQRT_2];
 
+/// Units of PES 6 models per metre. PES 6 models are already Y-up, feet at
+/// Y = 0 (the referee's model goes from 0 to 756 units, head included).
+// HYPOTHÈSE: chosen so that this referee is 1.80 m tall; to be checked by
+// eye next to Tommy. The faces (about 90 units) then measure about 21 cm.
+pub const PES6_UNITS_PER_METRE: f32 = 420.0;
+
 #[cfg(test)]
 mod tests {
     use super::*;
