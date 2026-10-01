@@ -22,6 +22,8 @@ pub mod id {
     pub const CLUMP: u32 = 0x0010;
     pub const LIGHT: u32 = 0x0012;
     pub const ATOMIC: u32 = 0x0014;
+    pub const RASTER: u32 = 0x0015;
+    pub const TEXTURE_DICTIONARY: u32 = 0x0016;
     pub const GEOMETRY_LIST: u32 = 0x001A;
     pub const RIGHT_TO_RENDER: u32 = 0x001F;
     pub const MORPH_PLG: u32 = 0x0105;
@@ -48,6 +50,8 @@ pub fn chunk_name(kind: u32) -> Option<&'static str> {
         id::CLUMP => "Clump",
         id::LIGHT => "Light",
         id::ATOMIC => "Atomic",
+        id::RASTER => "Raster",
+        id::TEXTURE_DICTIONARY => "Texture Dictionary",
         id::GEOMETRY_LIST => "Geometry List",
         id::RIGHT_TO_RENDER => "Right To Render",
         id::MORPH_PLG => "Morph PLG",
@@ -62,7 +66,7 @@ pub fn chunk_name(kind: u32) -> Option<&'static str> {
 }
 
 /// Whether the payload of this chunk type is a sequence of child chunks.
-/// Checked on every DFF of Vice City's `gta3.img`.
+/// Checked on every DFF and TXD of Vice City.
 pub fn is_container(kind: u32) -> bool {
     matches!(
         kind,
@@ -75,6 +79,8 @@ pub fn is_container(kind: u32) -> bool {
             | id::CLUMP
             | id::LIGHT
             | id::ATOMIC
+            | id::RASTER
+            | id::TEXTURE_DICTIONARY
             | id::GEOMETRY_LIST
     )
 }

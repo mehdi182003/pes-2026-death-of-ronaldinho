@@ -8,5 +8,6 @@
 pub mod dff;
 pub mod img;
 pub mod rw;
+pub mod txd;
 
 mod text;

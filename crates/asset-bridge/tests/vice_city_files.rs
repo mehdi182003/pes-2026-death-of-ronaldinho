@@ -11,6 +11,7 @@ use std::path::Path;
 use formats_rw::dff::{self, Clump, Matrix};
 use formats_rw::img::{DIR_ENTRY_SIZE, DirEntry, ImgArchive};
 use formats_rw::rw::{self, Version};
+use formats_rw::txd::{self, raster_format};
 
 fn open_gta3(vice_city: &Path) -> ImgArchive {
     ImgArchive::open_pair(&vice_city.join("models").join("gta3")).unwrap()
@@ -268,4 +269,91 @@ fn player_model_converts_to_the_neutral_model() {
         game.load_model("pas-un-modele"),
         Err(ViceCityError::NotFound(_))
     ));
+}
+
+/// Every TXD of gta3.img, and the loose ones of models/ and txd/, parses and
+/// decodes. INTRO.TXD is left out: an older RenderWare 3.1 file whose raster
+/// layout differs and which Chaos FC does not need.
+#[test]
+fn every_txd_parses_and_decodes() {
+    let Some(vice_city) = game_dir(Game::ViceCity) else {
+        return;
+    };
+    let mut files: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut archive = open_gta3(&vice_city);
+    let entries: Vec<DirEntry> = archive
+        .entries()
+        .iter()
+        .filter(|entry| entry.name.to_lowercase().ends_with(".txd"))
+        .cloned()
+        .collect();
+    for entry in &entries {
+        files.push((entry.name.clone(), archive.read(entry).unwrap()));
+    }
+    for folder in ["models", "txd"] {
+        for file in std::fs::read_dir(vice_city.join(folder)).unwrap() {
+            let path = file.unwrap().path();
+            let name = path.file_name().unwrap().to_string_lossy().to_string();
+            if name.to_lowercase().ends_with(".txd") && !name.eq_ignore_ascii_case("intro.txd") {
+                files.push((name, std::fs::read(&path).unwrap()));
+            }
+        }
+    }
+    assert!(files.len() > entries.len(), "TXD isolés introuvables");
+
+    let mut failures = Vec::new();
+    let mut texture_count = 0;
+    for (name, bytes) in &files {
+        match txd::parse_txd(bytes) {
+            Ok(dictionary) => {
+                for texture in &dictionary.textures {
+                    texture_count += 1;
+                    if let Err(err) = texture.decode_rgba8() {
+                        failures.push(format!("{name} : {err}"));
+                    }
+                }
+            }
+            Err(err) => failures.push(format!("{name} : {err}")),
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} échec(s) sur {texture_count} textures :
+{}",
+        failures.len(),
+        failures.join(
+            "
+"
+        )
+    );
+}
+
+#[test]
+fn player_txd_holds_tommy_texture() {
+    let Some(vice_city) = game_dir(Game::ViceCity) else {
+        return;
+    };
+    let mut archive = open_gta3(&vice_city);
+    let entry = archive.find("player.txd").unwrap().clone();
+    let dictionary = txd::parse_txd(&archive.read(&entry).unwrap()).unwrap();
+    let [texture] = dictionary.textures.as_slice() else {
+        panic!("une seule texture attendue");
+    };
+    assert_eq!(texture.name, "player");
+    assert_eq!((texture.width, texture.height), (256, 256));
+    assert_eq!(
+        texture.raster_format,
+        raster_format::FORMAT_565 | raster_format::MIPMAP
+    );
+    assert_eq!((texture.compression, texture.levels.len()), (1, 9));
+
+    let image = texture.decode_rgba8().unwrap();
+    assert_eq!(image.pixels.len(), 256 * 256 * 4);
+    assert!(image.pixels.chunks(4).all(|pixel| pixel[3] == 255));
+    let distinct: std::collections::HashSet<&[u8]> = image.pixels.chunks(4).collect();
+    assert!(
+        distinct.len() > 1000,
+        "{} couleurs seulement",
+        distinct.len()
+    );
 }
