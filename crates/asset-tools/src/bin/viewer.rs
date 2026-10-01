@@ -6,7 +6,7 @@
 //! cargo run -p asset-tools --bin viewer -- player
 //! cargo run -p asset-tools --bin viewer -- player --anim run_player
 //! cargo run -p asset-tools --bin viewer -- --textures D:\ViceCity\txd\LOADSC0.TXD
-//! cargo run -p asset-tools --bin viewer -- player --pes 0_text:1064 --pes-texture 0_text:296/1/0 --pes-head 0_text:1943
+//! cargo run -p asset-tools --bin viewer -- player --pes 0_text:1064 --pes-texture 0_text:419 --pes-boots 0_text:5322/0/0 --pes-head 0_text:1943
 //! ```
 
 use std::f32::consts::FRAC_PI_2;
@@ -16,11 +16,12 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use asset_bridge::config::{self, Game};
 use asset_bridge::model::{self as neutral, Animation, Model, Texture};
-use asset_bridge::pes6::{Pes6, PesFile};
+use asset_bridge::pes6::{Pes6, PesFile, PlayerParts};
 use asset_bridge::vice_city::{self, ViceCity, ViceCityError};
 use asset_tools::source::Source;
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::prelude::*;
+use bevy::render::view::window::screenshot::{Screenshot, save_to_disk};
 use bevy::transform::TransformSystems;
 use bevy_bridge::{
     AnimationLayer, AnimationLayers, BevyBridgePlugin, BindPose, ModelSpawner, SpawnOptions,
@@ -38,14 +39,19 @@ struct Args {
     #[arg(required_unless_present_any = ["textures", "pes"])]
     model: Option<String>,
 
-    /// Modèle de PES 6, <archive>:<numéro>[/<sous-fichier>] (par exemple
-    /// 0_text:431) : seul, ou à côté du modèle de Vice City.
+    /// Corps de joueur de PES 6, <archive>:<numéro>[/<sous-fichier>] (par
+    /// exemple 0_text:1064) : seul, ou à côté du modèle de Vice City.
     #[arg(long, conflicts_with_all = ["textures", "anim"])]
     pes: Option<PesFile>,
 
-    /// Texture du modèle de PES 6 (par exemple 0_text:432).
+    /// Tenue du joueur de PES 6 : maillot, short et chaussettes (par exemple
+    /// 0_text:419).
     #[arg(long, requires = "pes")]
     pes_texture: Option<PesFile>,
+
+    /// Chaussures du joueur de PES 6 (par exemple 0_text:5322/0/0).
+    #[arg(long, requires = "pes")]
+    pes_boots: Option<PesFile>,
 
     /// Tête à placer sur le modèle de PES 6 : ses modèles et sa texture
     /// (par exemple 0_text:1943).
@@ -71,6 +77,10 @@ struct Args {
     /// Fichier de configuration (par défaut : $CHAOS_FC_CONFIG, sinon ./config.toml).
     #[arg(long)]
     config: Option<PathBuf>,
+
+    /// Enregistre une capture de la fenêtre dans ce fichier PNG, puis ferme.
+    #[arg(long)]
+    capture: Option<PathBuf>,
 }
 
 fn main() -> AppExit {
@@ -104,6 +114,10 @@ fn main() -> AppExit {
             ..default()
         })
         .insert_resource(scene)
+        .insert_resource(Capture {
+            path: args.capture.clone(),
+            frame: 0,
+        })
         .insert_resource(Options {
             skeleton: true,
             mesh: true,
@@ -112,7 +126,10 @@ fn main() -> AppExit {
             playing: true,
         })
         .add_systems(Startup, setup)
-        .add_systems(Update, (handle_keys, orbit_camera, update_help).chain())
+        .add_systems(
+            Update,
+            (handle_keys, orbit_camera, update_help, capture).chain(),
+        )
         // After transform propagation, so that the skeleton follows the
         // skinned mesh of the same frame.
         .add_systems(PostUpdate, draw_gizmos.after(TransformSystems::Propagate))
@@ -128,11 +145,14 @@ fn load(args: &Args) -> Result<ViewerScene> {
     }
 
     let pes_scene = match &args.pes {
-        Some(file) => Some(load_pes(
+        Some(body) => Some(load_pes(
             &config_file,
-            file,
-            args.pes_texture.as_ref(),
-            args.pes_head.as_ref(),
+            &PlayerParts {
+                body: body.clone(),
+                kit: args.pes_texture.clone(),
+                boots: args.pes_boots.clone(),
+                head: args.pes_head.clone(),
+            },
         )?),
         None => None,
     };
@@ -172,16 +192,11 @@ fn load(args: &Args) -> Result<ViewerScene> {
     Ok(ViewerScene::new(model, textures, false, note, animation))
 }
 
-/// A PES 6 model, its texture and its head, the model scaled to metres.
-fn load_pes(
-    config_file: &std::path::Path,
-    file: &PesFile,
-    texture: Option<&PesFile>,
-    head: Option<&PesFile>,
-) -> Result<(Model, Vec<Texture>)> {
+/// A PES 6 player and its textures, the model scaled to metres.
+fn load_pes(config_file: &std::path::Path, parts: &PlayerParts) -> Result<(Model, Vec<Texture>)> {
     let pes6 = config::read_paths(config_file)?.check(Game::Pes6)?;
     let pes = Pes6::open(&pes6)?;
-    let (mut model, textures) = pes.load_player(file, texture, head)?;
+    let (mut model, textures) = pes.load_player(parts)?;
     // PES models are Y-up like the viewer; only the units change.
     let scale = Mat4::from_scale(Vec3::splat(1.0 / retarget::PES6_UNITS_PER_METRE));
     model.nodes[0].local = (scale * Mat4::from_cols_array(&model.nodes[0].local)).to_cols_array();
@@ -386,6 +401,38 @@ impl Options {
 
 #[derive(Component)]
 struct ModelRoot;
+
+/// `--capture`: where to save a picture of the window, and the frames
+/// drawn so far.
+#[derive(Resource)]
+struct Capture {
+    path: Option<PathBuf>,
+    frame: u32,
+}
+
+/// Frame at which the picture is taken: meshes and textures are on screen
+/// by then.
+const CAPTURE_FRAME: u32 = 240;
+
+/// Saves the picture at [`CAPTURE_FRAME`], then closes the viewer once the
+/// file had time to be written.
+fn capture(
+    mut commands: Commands,
+    mut capture: ResMut<Capture>,
+    mut exits: MessageWriter<AppExit>,
+) {
+    let Some(path) = capture.path.clone() else {
+        return;
+    };
+    capture.frame += 1;
+    if capture.frame == CAPTURE_FRAME {
+        commands
+            .spawn(Screenshot::primary_window())
+            .observe(save_to_disk(path));
+    } else if capture.frame == CAPTURE_FRAME + 30 {
+        exits.write(AppExit::Success);
+    }
+}
 
 #[derive(Component)]
 struct HelpText;

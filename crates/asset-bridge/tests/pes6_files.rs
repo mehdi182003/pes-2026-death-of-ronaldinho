@@ -5,7 +5,7 @@
 //! check properties rather than exact counts.
 
 use asset_bridge::config::Game;
-use asset_bridge::pes6::{self, Pes6};
+use asset_bridge::pes6::{self, Pes6, PlayerParts};
 use asset_bridge::testing::game_dir;
 use formats_pes::content::{self, Kind, Packing, Report};
 use formats_pes::model::{self, ModelError};
@@ -252,11 +252,9 @@ fn player_body_loads_textured_at_a_plausible_size() {
         return;
     };
     let pes = Pes6::open(&dir).unwrap();
-    // The yellow training bib (128 × 128).
-    let texture = pes
-        .load_texture(&"0_text:296/1/0".parse().unwrap())
-        .unwrap();
-    assert_eq!((texture.width, texture.height), (128, 128));
+    // A kit: shirt, shorts and socks on one texture.
+    let texture = pes.load_texture(&"0_text:419".parse().unwrap()).unwrap();
+    assert_eq!((texture.width, texture.height), (512, 256));
     let model = pes
         .load_model(&"0_text:1064".parse().unwrap(), Some(&texture.name))
         .unwrap();
@@ -295,13 +293,26 @@ fn player_body_gets_its_head_on_the_shoulders() {
     let pes = Pes6::open(&dir).unwrap();
     let file = |text: &str| text.parse().unwrap();
     let (model, textures) = pes
-        .load_player(
-            &file("0_text:1064"),
-            Some(&file("0_text:296/1/0")),
-            Some(&file("0_text:1943")),
-        )
+        .load_player(&PlayerParts {
+            body: file("0_text:1064"),
+            kit: Some(file("0_text:419")),
+            boots: Some(file("0_text:5322/0/0")),
+            head: Some(file("0_text:1943")),
+        })
         .unwrap();
-    assert_eq!(textures.len(), 2, "tenue et visage");
+    assert_eq!(textures.len(), 3, "tenue, chaussures et visage");
+    // Every body triangle that is drawn uses the kit, the boots or the
+    // skin colour; the markings (numbers...) are left out.
+    let body_materials: Vec<_> = model
+        .meshes
+        .iter()
+        .filter(|mesh| mesh.node == 0)
+        .flat_map(|mesh| &mesh.primitives)
+        .map(|primitive| primitive.material.texture.clone())
+        .collect();
+    assert!(body_materials.contains(&Some("0_text:419".into())));
+    assert!(body_materials.contains(&Some("0_text:5322/0/0".into())));
+    assert!(body_materials.contains(&None), "peau");
     let head = model.nodes.iter().position(|n| n.name == "tête").unwrap();
     let m = model.nodes[head].local;
     let heights: Vec<f32> = model

@@ -136,31 +136,56 @@ impl Pes6 {
         })
     }
 
-    /// A character assembled from a body and, optionally, a head: the
-    /// first model of `body` with `body_texture` on every slot, and the
-    /// first model of `head` with the first texture of `head`, placed on the
-    /// body's head bone. Returns the model and its textures.
-    pub fn load_player(
-        &self,
-        body: &PesFile,
-        body_texture: Option<&PesFile>,
-        head: Option<&PesFile>,
-    ) -> Result<(Model, Vec<Texture>), Pes6Error> {
+    /// A player assembled from a body, its kit, its boots and its head.
+    /// Each texture slot of the body gets its texture (see
+    /// [`PlayerSlot`]); the first model of `head`, with the first texture
+    /// of `head`, is placed on the body's head bone. Returns the model and
+    /// its textures.
+    pub fn load_player(&self, parts: &PlayerParts) -> Result<(Model, Vec<Texture>), Pes6Error> {
         let mut textures = Vec::new();
-        if let Some(texture) = body_texture {
-            textures.push(self.load_texture(texture)?);
-        }
-        let (found, data) = self.first_of(body, Kind::Model)?;
+        let mut load = |file: Option<&PesFile>| -> Result<Option<String>, Pes6Error> {
+            let Some(file) = file else {
+                return Ok(None);
+            };
+            let texture = self.load_texture(file)?;
+            let name = texture.name.clone();
+            textures.push(texture);
+            Ok(Some(name))
+        };
+        let kit = load(parts.kit.as_ref())?;
+        let boots = load(parts.boots.as_ref())?;
+        let face = match &parts.head {
+            Some(head) => self.load_texture(head).ok(),
+            None => None,
+        };
+        let face_name = face.as_ref().map(|t| t.name.clone());
+        let skin = face.as_ref().map_or(DEFAULT_SKIN, average_color);
+        textures.extend(face);
+
+        let (found, data) = self.first_of(&parts.body, Kind::Model)?;
         let parsed = pes_model::parse(&data).map_err(|source| Pes6Error::Model {
             file: found.clone(),
             source,
         })?;
-        let mut model = convert_model(
-            &found.to_string(),
-            &parsed,
-            textures.first().map(|t| t.name.as_str()),
-        );
-        let Some(head) = head else {
+        let textured = |texture: &Option<String>| Material {
+            base_color: [1.0; 4],
+            texture: texture.clone(),
+        };
+        let mut model =
+            convert_model_with(&found.to_string(), &parsed, |slot| {
+                match PlayerSlot::of(slot) {
+                    PlayerSlot::Kit => Some(textured(&kit)),
+                    PlayerSlot::Boots => {
+                        Some(textured(if boots.is_some() { &boots } else { &kit }))
+                    }
+                    PlayerSlot::Skin => Some(Material {
+                        base_color: skin,
+                        texture: None,
+                    }),
+                    PlayerSlot::Marking => None,
+                }
+            });
+        let Some(head) = &parts.head else {
             return Ok((model, textures));
         };
 
@@ -172,9 +197,6 @@ impl Pes6 {
             .iter()
             .max_by(|a, b| a.joint()[1].total_cmp(&b.joint()[1]))
             .ok_or_else(|| Pes6Error::Missing(format!("{found} : pas de squelette")))?;
-        let face = self.load_texture(head).ok();
-        let face_name = face.as_ref().map(|t| t.name.clone());
-        textures.extend(face);
         let node = model.nodes.len();
         model.nodes.push(Node {
             name: "tête".into(),
@@ -214,6 +236,76 @@ impl Pes6 {
         };
         Ok((path, found.data))
     }
+}
+
+/// The files a player is assembled from (see [`Pes6::load_player`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlayerParts {
+    /// The body (`0_text:1064`).
+    pub body: PesFile,
+    /// The kit: shirt, shorts and socks on one 512 × 256 texture
+    /// (`0_text:419`).
+    pub kit: Option<PesFile>,
+    /// The boots (`0_text:5322/0/0`).
+    pub boots: Option<PesFile>,
+    /// The head and its face texture (`0_text:1943`).
+    pub head: Option<PesFile>,
+}
+
+/// What a texture slot of a player's body (opcode `02` of its draws)
+/// shows, from where its triangles are on the body and which part of the
+/// texture they use.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlayerSlot {
+    /// Slots 1, 5 and 10: shirt, shorts, socks. Slot 1 is checked: its
+    /// texture coordinates fall exactly on the shirt, sleeves and shorts of
+    /// a kit texture.
+    // HYPOTHÈSE: slot 5 (thin strips of the arms, right edge of the kit
+    // texture) and slot 10 (back of the legs, repeated texture) use the kit
+    // too.
+    Kit,
+    /// Slot 4: the feet.
+    // HYPOTHÈSE: the boots texture; the feet only use its left third.
+    Boots,
+    /// Slots 0 and 7: arms, hands, neck.
+    // HYPOTHÈSE: bare skin, drawn with the average colour of the face
+    // texture until a skin texture is found.
+    Skin,
+    /// Slots 2, 3, 6, 8, 9: small patches on the chest, the back and the
+    /// shorts (numbers, name, badge ?). Not drawn yet.
+    Marking,
+}
+
+impl PlayerSlot {
+    pub fn of(slot: u16) -> Self {
+        match slot {
+            1 | 5 | 10 => PlayerSlot::Kit,
+            4 => PlayerSlot::Boots,
+            0 | 7 => PlayerSlot::Skin,
+            _ => PlayerSlot::Marking,
+        }
+    }
+}
+
+/// Skin colour when no face texture is given, sRGB.
+const DEFAULT_SKIN: [f32; 4] = [0.47, 0.33, 0.24, 1.0];
+
+/// Average colour of a texture, sRGB from 0 to 1.
+fn average_color(texture: &Texture) -> [f32; 4] {
+    let pixels = texture.rgba8.as_chunks::<4>().0;
+    let mut sum = [0u64; 3];
+    for pixel in pixels {
+        for (total, &channel) in sum.iter_mut().zip(pixel) {
+            *total += u64::from(channel);
+        }
+    }
+    let count = pixels.len().max(1) as f32;
+    [
+        sum[0] as f32 / count / 255.0,
+        sum[1] as f32 / count / 255.0,
+        sum[2] as f32 / count / 255.0,
+        1.0,
+    ]
 }
 
 /// A file of an archive, or a sub-file inside it: `0_text:431` (file 431
@@ -270,6 +362,21 @@ impl fmt::Display for PesFile {
 // whose single texture covers the whole body; players will need a texture
 // per slot (kit, skin, boots...).
 pub fn convert_model(name: &str, model: &PesModel, texture: Option<&str>) -> Model {
+    convert_model_with(name, model, |_| {
+        Some(Material {
+            base_color: [1.0; 4],
+            texture: texture.map(str::to_owned),
+        })
+    })
+}
+
+/// Like [`convert_model`], with the material of each texture slot given by
+/// `material`; a slot whose material is `None` is not drawn.
+pub fn convert_model_with(
+    name: &str,
+    model: &PesModel,
+    material: impl Fn(u16) -> Option<Material>,
+) -> Model {
     let meshes = model
         .parts
         .iter()
@@ -302,12 +409,11 @@ pub fn convert_model(name: &str, model: &PesModel, texture: Option<&str>) -> Mod
                 }),
                 primitives: slots
                     .into_iter()
-                    .map(|(_, indices)| Primitive {
-                        material: Material {
-                            base_color: [1.0; 4],
-                            texture: texture.map(str::to_owned),
-                        },
-                        indices,
+                    .filter_map(|(slot, indices)| {
+                        Some(Primitive {
+                            material: material(slot)?,
+                            indices,
+                        })
                     })
                     .collect(),
                 skin: None,
