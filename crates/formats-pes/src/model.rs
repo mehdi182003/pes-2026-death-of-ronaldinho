@@ -94,6 +94,77 @@ pub struct Draw {
 pub struct PesModel {
     pub parts: Vec<VertexPart>,
     pub draws: Vec<Draw>,
+    /// Empty for models that do not move with bones (faces, balls...).
+    pub bones: Vec<Bone>,
+}
+
+/// A bone of the skeleton, in the bind pose (T-pose).
+///
+/// The record gives the transform from model space to the bone's space:
+/// a point `p` of the model is at `rotation · p + translation` for the
+/// bone. The joint is at `-rotationᵀ · translation` (the referee's head:
+/// (0, 670.6, 0.7)).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Bone {
+    /// Euler angles, radians, around X, Y and Z.
+    pub angles: [f32; 3],
+    pub translation: [f32; 3],
+    /// Index of the parent bone; `None` for the root.
+    pub parent: Option<usize>,
+}
+
+impl Bone {
+    /// The rotation part of the record, as a row-major 3 × 3 matrix:
+    /// `Ry · Rz · Rx`.
+    // HYPOTHÈSE: of the twelve possible orders, four put the joints of the
+    // arms and the head where the mesh has them, and attach a head the
+    // right way; this one is kept. The joints of the legs and the spine do
+    // not fall in place yet with any order: to be resolved in J6, with the
+    // animations.
+    pub fn rotation(&self) -> [[f32; 3]; 3] {
+        let [x, y, z] = self.angles;
+        let rx = [
+            [1.0, 0.0, 0.0],
+            [0.0, x.cos(), -x.sin()],
+            [0.0, x.sin(), x.cos()],
+        ];
+        let ry = [
+            [y.cos(), 0.0, y.sin()],
+            [0.0, 1.0, 0.0],
+            [-y.sin(), 0.0, y.cos()],
+        ];
+        let rz = [
+            [z.cos(), -z.sin(), 0.0],
+            [z.sin(), z.cos(), 0.0],
+            [0.0, 0.0, 1.0],
+        ];
+        multiply(&multiply(&ry, &rz), &rx)
+    }
+
+    /// Where the joint is in the model, in the bind pose.
+    pub fn joint(&self) -> [f32; 3] {
+        let r = self.rotation();
+        let t = self.translation;
+        std::array::from_fn(|i| -(r[0][i] * t[0] + r[1][i] * t[1] + r[2][i] * t[2]))
+    }
+
+    /// Transform from the bone's space to the model, as a column-major 4 × 4
+    /// matrix (the inverse of the record).
+    pub fn bind_matrix(&self) -> [f32; 16] {
+        let r = self.rotation();
+        let joint = self.joint();
+        // Columns of the inverse rotation are the rows of `r`.
+        [
+            r[0][0], r[0][1], r[0][2], 0.0, //
+            r[1][0], r[1][1], r[1][2], 0.0, //
+            r[2][0], r[2][1], r[2][2], 0.0, //
+            joint[0], joint[1], joint[2], 1.0,
+        ]
+    }
+}
+
+fn multiply(a: &[[f32; 3]; 3], b: &[[f32; 3]; 3]) -> [[f32; 3]; 3] {
+    std::array::from_fn(|i| std::array::from_fn(|j| (0..3).map(|k| a[i][k] * b[k][j]).sum()))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -165,7 +236,41 @@ pub fn parse(bytes: &[u8]) -> Result<PesModel, ModelError> {
         "programme",
     )?;
     let draws = run_program(program, &parts, &strip)?;
-    Ok(PesModel { parts, draws })
+    let bones = parse_bones(&file, program_end)?;
+    Ok(PesModel {
+        parts,
+        draws,
+        bones,
+    })
+}
+
+/// The skeleton, right after the draw program: a count (u32), then per bone
+/// three Euler angles and a translation (6 × f32), then the parents (i16
+/// per bone, -1 for the root). Checked on the 762 models of the demo:
+/// 700 have no bone, the 26 bodies of players and referees have 19.
+fn parse_bones(file: &Bytes, at: usize) -> Result<Vec<Bone>, ModelError> {
+    let count = file.u32(at, "squelette")?;
+    let parents_at = at + 4 + 24 * count;
+    (0..count)
+        .map(|index| {
+            let record = file.f32s::<6>(at + 4 + 24 * index, "squelette")?;
+            let parent = file.u16(parents_at + 2 * index, "squelette")? as i16;
+            let parent = match usize::try_from(parent) {
+                Ok(parent) if parent < index => Some(parent),
+                Err(_) if parent == -1 => None,
+                _ => {
+                    return Err(ModelError::BadProgram(format!(
+                        "os {index} : parent {parent} invalide"
+                    )));
+                }
+            };
+            Ok(Bone {
+                angles: [record[0], record[1], record[2]],
+                translation: [record[3], record[4], record[5]],
+                parent,
+            })
+        })
+        .collect()
 }
 
 /// Vertex parts: a count, one offset per part (from the start of the
@@ -411,7 +516,8 @@ mod tests {
         program.extend([0x07, 0x05, 3, 0, 0, 0, 3, 0, 1, 0]); // draw
         program.extend([0, 0]);
         let program_end = PROGRAM_START + program.len();
-        let vertices_at = program_end.next_multiple_of(4);
+        // An empty skeleton right after the program.
+        let vertices_at = (program_end + 4).next_multiple_of(4);
         let mut part = vec![1, 0, 0, 0, 8, 0, 0, 0, 3, 0, 32, 0, 0, 0, 0, 0];
         for i in 0..3 {
             for value in [i as f32, 0.0, 1.0, 0.0, 1.0, 0.0, 0.5, 0.25] {
@@ -461,6 +567,27 @@ mod tests {
                 triangles: vec![[0, 1, 2]],
             }]
         );
+        assert!(model.bones.is_empty());
+    }
+
+    #[test]
+    fn bone_records_give_their_joint() {
+        use std::f32::consts::FRAC_PI_2;
+        // The head of the referee: model space to bone space.
+        let head = Bone {
+            angles: [0.0, -FRAC_PI_2, -std::f32::consts::PI],
+            translation: [0.713, 670.576, -0.002],
+            parent: Some(11),
+        };
+        let joint = head.joint();
+        assert!((joint[1] - 670.576).abs() < 0.01, "{joint:?}");
+        assert!(
+            joint[0].abs() < 0.01 && (joint[2] - 0.713).abs() < 0.01,
+            "{joint:?}"
+        );
+        // The bind matrix takes the bone's origin to the joint.
+        let m = head.bind_matrix();
+        assert_eq!([m[12], m[13], m[14]], joint);
     }
 
     #[test]
