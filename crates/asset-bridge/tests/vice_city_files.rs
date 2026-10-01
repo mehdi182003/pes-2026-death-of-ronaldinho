@@ -357,3 +357,25 @@ fn player_txd_holds_tommy_texture() {
         distinct.len()
     );
 }
+
+#[test]
+fn player_textures_load_by_name() {
+    let Some(vice_city) = game_dir(Game::ViceCity) else {
+        return;
+    };
+    let mut game = ViceCity::open(&vice_city).unwrap();
+    let textures = game.load_textures("player").unwrap();
+    let [texture] = textures.as_slice() else {
+        panic!("une seule texture attendue");
+    };
+    assert_eq!(
+        (texture.name.as_str(), texture.width, texture.height),
+        ("player", 256, 256)
+    );
+    assert!(texture.is_opaque());
+
+    // The model's material names this texture.
+    let model = game.load_model("player").unwrap();
+    let material = &model.meshes[0].primitives[0].material;
+    assert_eq!(material.texture.as_deref(), Some("player"));
+}

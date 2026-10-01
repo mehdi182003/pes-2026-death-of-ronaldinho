@@ -5,8 +5,9 @@ use std::path::Path;
 use formats_rw::dff::{self, Clump};
 use formats_rw::img::{ImgArchive, ImgError};
 use formats_rw::rw::RwError;
+use formats_rw::txd;
 
-use crate::model::{Bone, Material, Mesh, Model, Node, Primitive, Skeleton};
+use crate::model::{Bone, Material, Mesh, Model, Node, Primitive, Skeleton, Texture};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ViceCityError {
@@ -42,10 +43,32 @@ impl ViceCity {
 
     /// Loads a model of `gta3.img`: `player`, `player.dff`, any case.
     pub fn load_model(&mut self, name: &str) -> Result<Model, ViceCityError> {
-        let file = if name.to_lowercase().ends_with(".dff") {
+        let (file, bytes) = self.read(name, "dff")?;
+        let clump = dff::parse_dff(&bytes).map_err(|source| ViceCityError::Format {
+            name: file.clone(),
+            source,
+        })?;
+        model_from_clump(&file, &clump).map_err(|message| ViceCityError::Unsupported {
+            name: file,
+            message,
+        })
+    }
+
+    /// Decodes the textures of a dictionary of `gta3.img`: `player` or
+    /// `player.txd`, any case. A model usually has a dictionary of the
+    /// same name.
+    pub fn load_textures(&mut self, name: &str) -> Result<Vec<Texture>, ViceCityError> {
+        let (file, bytes) = self.read(name, "txd")?;
+        decode_txd(&file, &bytes)
+    }
+
+    /// Reads an entry of `gta3.img`, adding `extension` to `name` if needed.
+    /// Returns the name as stored in the archive, and the content.
+    fn read(&mut self, name: &str, extension: &str) -> Result<(String, Vec<u8>), ViceCityError> {
+        let file = if name.to_lowercase().ends_with(&format!(".{extension}")) {
             name.to_owned()
         } else {
-            format!("{name}.dff")
+            format!("{name}.{extension}")
         };
         let entry = self
             .archive
@@ -53,15 +76,34 @@ impl ViceCity {
             .ok_or(ViceCityError::NotFound(file))?
             .clone();
         let bytes = self.archive.read(&entry)?;
-        let clump = dff::parse_dff(&bytes).map_err(|source| ViceCityError::Format {
-            name: entry.name.clone(),
-            source,
-        })?;
-        model_from_clump(&entry.name, &clump).map_err(|message| ViceCityError::Unsupported {
-            name: entry.name.clone(),
-            message,
-        })
+        Ok((entry.name, bytes))
     }
+}
+
+/// Decodes every texture of a TXD file. `name` is used in error messages.
+pub fn decode_txd(name: &str, bytes: &[u8]) -> Result<Vec<Texture>, ViceCityError> {
+    let dictionary = txd::parse_txd(bytes).map_err(|source| ViceCityError::Format {
+        name: name.to_owned(),
+        source,
+    })?;
+    dictionary
+        .textures
+        .iter()
+        .map(|texture| {
+            let image = texture
+                .decode_rgba8()
+                .map_err(|err| ViceCityError::Unsupported {
+                    name: name.to_owned(),
+                    message: err.to_string(),
+                })?;
+            Ok(Texture {
+                name: texture.name.clone(),
+                width: image.width,
+                height: image.height,
+                rgba8: image.pixels,
+            })
+        })
+        .collect()
 }
 
 /// Converts a parsed DFF into a neutral model. Each atomic becomes a mesh

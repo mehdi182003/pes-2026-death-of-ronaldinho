@@ -83,3 +83,24 @@ pub struct Bone {
     /// the bone where the mesh expects it.
     pub inverse_bind: Mat4,
 }
+
+/// A decoded texture: 4 bytes per pixel (R, G, B, A, sRGB), rows from the
+/// top. Materials refer to it by name, ignoring case like the game.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Texture {
+    pub name: String,
+    pub width: u32,
+    pub height: u32,
+    pub rgba8: Vec<u8>,
+}
+
+impl Texture {
+    /// Whether every pixel is fully opaque.
+    pub fn is_opaque(&self) -> bool {
+        self.rgba8
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .all(|pixel| pixel[3] == 255)
+    }
+}
