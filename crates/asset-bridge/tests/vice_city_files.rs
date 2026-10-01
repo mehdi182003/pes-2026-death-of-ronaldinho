@@ -583,3 +583,35 @@ fn weapon_dat_describes_the_colt45() {
     assert!(colt.anim_loop[2] / 30.0 < fire.duration());
     assert!(weapons.iter().any(|w| w.name == "Uzi") && weapons.iter().any(|w| w.name == "m4"));
 }
+
+#[test]
+fn colt45_loads_as_a_weapon() {
+    let Some(vice_city) = game_dir(Game::ViceCity) else {
+        return;
+    };
+    let mut game = ViceCity::open(&vice_city).unwrap();
+    let colt = game.load_weapon(&asset_bridge::vice_city::COLT45).unwrap();
+    assert_eq!(colt.name, "Colt45");
+    assert_eq!(colt.fire_animation.name, "colt45_fire");
+    // Arms only: clavicle, upper arm, forearm and hand of the right side.
+    assert_eq!(colt.fire_animation.tracks.len(), 4);
+    let [start, end, fire] = colt.fire_loop;
+    assert!(start < fire && fire < end && end <= colt.fire_animation.duration);
+    // The model's material finds its texture in the dictionary.
+    let texture = colt.model.meshes[0].primitives[0]
+        .material
+        .texture
+        .clone()
+        .unwrap();
+    assert!(
+        colt.textures
+            .iter()
+            .any(|t| t.name.eq_ignore_ascii_case(&texture))
+    );
+    assert!((0.5..2.0).contains(&colt.fire_sound.duration()));
+    assert_eq!(&colt.fire_sound.to_wav()[..4], b"RIFF");
+
+    for spec in [asset_bridge::vice_city::UZI, asset_bridge::vice_city::M4] {
+        game.load_weapon(&spec).unwrap();
+    }
+}

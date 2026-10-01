@@ -163,3 +163,42 @@ impl Track {
             })
     }
 }
+
+/// A sound: signed 16-bit mono samples.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Sound {
+    pub sample_rate: u32,
+    pub samples: Vec<i16>,
+}
+
+impl Sound {
+    /// Length in seconds.
+    pub fn duration(&self) -> f32 {
+        self.samples.len() as f32 / self.sample_rate.max(1) as f32
+    }
+
+    /// The sound as a WAV file, for players that decode files.
+    pub fn to_wav(&self) -> Vec<u8> {
+        formats_rw::sfx::wav_bytes(self.sample_rate, &self.samples)
+    }
+}
+
+/// A firearm, with everything needed to hold it and shoot.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Weapon {
+    pub name: String,
+    pub model: Model,
+    pub textures: Vec<Texture>,
+    /// Arm animation of the shot, played over the body animation: it only
+    /// moves the bones it has tracks for.
+    pub fire_animation: Animation,
+    /// Loop start, loop end and firing instant in `fire_animation`, in
+    /// seconds: holding the trigger loops between the first two, a round is
+    /// fired at the third.
+    pub fire_loop: [f32; 3],
+    /// Where the shot leaves the weapon, in the weapon's space.
+    pub muzzle: [f32; 3],
+    /// Range of a shot, in metres.
+    pub range: f32,
+    pub fire_sound: Sound,
+}
