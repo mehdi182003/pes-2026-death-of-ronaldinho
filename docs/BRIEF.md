@@ -191,9 +191,11 @@ Le cœur du projet est un moteur de foot crédible. Tommy, l'arbitre et les corp
 
 On valide d'abord que les assets des deux jeux sont lisibles (J1 à J5), avant d'écrire la moindre ligne d'IA de foot. Un jalon n'est terminé que lorsque son critère est validé par Mokhmad sur sa machine.
 
+**Installations disponibles chez Mokhmad (1er octobre 2026) :** GTA Vice City (PC) installé ; PES 6 pas encore.
+
 | Jalon | Livrable | Critère de réussite |
 | --- | --- | --- |
-| J0 | Workspace Cargo, `config.toml`, `.gitignore`, CI (fmt, clippy, tests) | `cargo test` passe ; le jeu refuse de démarrer sans chemins valides. |
+| J0 | Workspace Cargo, `config.toml`, `.gitignore`, CI (fmt, clippy, tests) | `cargo test` passe ; le jeu refuse de démarrer sans chemins valides. **Validé le 1er octobre 2026.** |
 | J1 | Lecture IMG/DIR et DFF de Vice City | Tommy s'affiche en T-pose, géométrie correcte, dans le visualiseur. |
 | J2 | TXD + IFP | Tommy texturé joue son animation de course en boucle. |
 | J3 | Armes Vice City | Tommy tient une arme, tire dans une scène vide, avec le son d'origine. |
