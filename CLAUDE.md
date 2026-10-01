@@ -30,6 +30,11 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 cargo run -p game                               # lance le jeu (lit ./config.toml)
 cargo run -p asset-tools -- check-config        # vérifie les chemins sans compiler Bevy
+cargo run -p asset-tools -- img list --filter player   # contenu de models/gta3.img de Vice City
+cargo run -p asset-tools -- dump vc:player.dff       # dump annoté d'un fichier RenderWare
+cargo run -p asset-tools --bin viewer -- player      # visualiseur de modèles (Bevy)
 ```
 
 La variable d'environnement `CHAOS_FC_CONFIG` permet d'utiliser un autre fichier de configuration que `./config.toml`.
+
+Les tests qui lisent les vrais fichiers des jeux commencent par `let Some(dir) = asset_bridge::testing::game_dir(Game::ViceCity) else { return; };` : ils sont ignorés quand le jeu n'est pas configuré (CI).

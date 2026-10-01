@@ -97,6 +97,13 @@ La crate game n'importe jamais formats-rw ni formats-pes directement. Changer de
 
 **Décisions (J0) :** la lecture et la validation des chemins des jeux vivent dans `asset-bridge` (module `config`), partagées par `game` et `asset-tools`. Le binaire du jeu s'appelle `chaos-fc` (`cargo run -p game`).
 
+**Décisions (J1) :**
+
+- `asset-bridge` produit des types neutres (`asset_bridge::model` : nœuds, maillages par matériau, squelette), sans dépendre de Bevy. Ils restent **dans le repère et les unités du jeu d'origine** (Vice City : mètres ; un personnage en pose de liaison est debout le long de +Y). Les changements d'axes sont laissés au consommateur, puis à `retarget` (J6).
+- `asset-tools` contient deux binaires : la CLI (`asset-tools`) et le visualiseur Bevy (`viewer`). Leur entrée est un fichier, ou `vc:<nom>` pour une entrée de `models/gta3.img`.
+- Les fichiers extraits vont dans `%LOCALAPPDATA%\chaos-fc\extracted\<jeu>` (équivalents macOS/Linux dans `asset_bridge::cache`).
+- Les tests sur vrais fichiers vivent dans `crates/asset-bridge/tests/` et commencent par `asset_bridge::testing::game_dir(...)`, qui les ignore si le jeu n'est pas configuré.
+
 ```text
 chaos-fc/
 ├── Cargo.toml            (workspace)
@@ -128,6 +135,8 @@ Côté Vice City, les formats sont documentés depuis vingt ans et il suffit de 
 | SFX | Sons des armes | Banque audio dans le dossier `audio/`. Format exact à vérifier. |
 
 Références : le wiki GTAMods (pages RenderWare, DFF, TXD, IFP, IMG), librw et OpenRW pour comparer une implémentation existante.
+
+**Constats (J1)**, détaillés dans `docs/formats/` : les 4617 DFF de `gta3.img` mélangent trois versions de RenderWare (3.4.0.3, 3.3.0.2, 3.2.0.0) ; le modèle de Tommy (`player.dff`) est en 3.3.0.2, pas en 3.4.0.3. Certaines pages du wiki sont fausses (taille d'une frame) : seule la vérification sur les vrais fichiers fait foi.
 
 ### PES 6 (version PC)
 
@@ -196,7 +205,7 @@ On valide d'abord que les assets des deux jeux sont lisibles (J1 à J5), avant d
 | Jalon | Livrable | Critère de réussite |
 | --- | --- | --- |
 | J0 | Workspace Cargo, `config.toml`, `.gitignore`, CI (fmt, clippy, tests) | `cargo test` passe ; le jeu refuse de démarrer sans chemins valides. **Validé le 1er octobre 2026.** |
-| J1 | Lecture IMG/DIR et DFF de Vice City | Tommy s'affiche en T-pose, géométrie correcte, dans le visualiseur. |
+| J1 | Lecture IMG/DIR et DFF de Vice City | Tommy s'affiche en T-pose, géométrie correcte, dans le visualiseur. **Validé le 1er octobre 2026** (Tommy et le Colt 45 vérifiés par Mokhmad). |
 | J2 | TXD + IFP | Tommy texturé joue son animation de course en boucle. |
 | J3 | Armes Vice City | Tommy tient une arme, tire dans une scène vide, avec le son d'origine. |
 | J4 | Lecture AFS et décompression PES 6 | Liste complète des fichiers internes extraits et identifiés. |

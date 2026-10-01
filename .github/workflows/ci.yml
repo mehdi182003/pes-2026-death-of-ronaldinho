@@ -1,8 +1,16 @@
 name: CI
 
+# Les branches de jalon passent par une pull request : on ne lance la CI
+# qu'une fois par push (événement pull_request), et sur main après fusion.
 on:
   push:
+    branches: [main]
   pull_request:
+
+# Un nouveau push annule la vérification devenue obsolète.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
