@@ -229,7 +229,7 @@ On valide d'abord que les assets des deux jeux sont lisibles (J1 à J5), avant d
 | J0 | Workspace Cargo, `config.toml`, `.gitignore`, CI (fmt, clippy, tests) | `cargo test` passe ; le jeu refuse de démarrer sans chemins valides. **Validé le 1er octobre 2026.** |
 | J1 | Lecture IMG/DIR et DFF de Vice City | Tommy s'affiche en T-pose, géométrie correcte, dans le visualiseur. **Validé le 1er octobre 2026** (Tommy et le Colt 45 vérifiés par Mokhmad). |
 | J2 | TXD + IFP | Tommy texturé joue son animation de course en boucle. **Validé le 1er octobre 2026** (Tommy texturé court en boucle, vérifié par Mokhmad). |
-| J3 | Armes Vice City | Tommy tient une arme, tire dans une scène vide, avec le son d'origine. |
+| J3 | Armes Vice City | Tommy tient une arme, tire dans une scène vide, avec le son d'origine. **Validé le 1er octobre 2026** (Colt 45, Uzi et Ruger : prise en main, visée, rythme et sons vérifiés par Mokhmad). |
 | J4 | Lecture AFS et décompression PES 6 | Liste complète des fichiers internes extraits et identifiés. |
 | J5 | Modèle joueur PES 6 | Un joueur PES texturé s'affiche à côté de Tommy, à la bonne échelle. |
 | J6 | Squelettes et retargeting | Une même animation joue correctement sur Tommy et sur un joueur PES. |

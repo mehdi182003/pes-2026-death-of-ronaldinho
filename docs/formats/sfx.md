@@ -40,7 +40,7 @@ D'après la liste du wiki (à confirmer à l'oreille) :
 | 77 | rechargement du pistolet |
 | 156 – 157 | douille qui tombe |
 
-Le jeu associe arme et son dans son code, qu'on ne décompile pas : la confirmation se fait à l'oreille. **Son 50 = tir du Colt 45 : confirmé par Mokhmad.** HYPOTHÈSE pour les autres (54 pour l'Uzi, 74 pour le Ruger), à confirmer de la même façon.
+Le jeu associe arme et son dans son code, qu'on ne décompile pas : la confirmation se fait à l'oreille. **Confirmés par Mokhmad : 50 = Colt 45, 54 = Uzi, 74 = Ruger.** Les autres numéros de la liste restent à confirmer quand ils serviront.
 
 ## Outil
 

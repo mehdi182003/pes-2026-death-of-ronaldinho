@@ -69,9 +69,9 @@ pub struct WeaponSpec {
     pub fire_sound: usize,
 }
 
-// Sound numbers from the GTAMods list of Vice City sounds: 50 (Colt 45)
-// confirmed by ear. HYPOTHÈSE for the others, and for the model names until
-// the IDE files are read.
+// Sound numbers from the GTAMods list of Vice City sounds, confirmed by ear
+// for the Colt 45 (50), the Uzi (54) and the Ruger (74). Model names are
+// used until the IDE files are read.
 pub const COLT45: WeaponSpec = WeaponSpec {
     name: "Colt45",
     model: "colt45",
