@@ -7,11 +7,13 @@ use formats_rw::dff::{self, Clump};
 use formats_rw::ifp::{self, IfpError};
 use formats_rw::img::{ImgArchive, ImgError};
 use formats_rw::rw::RwError;
+use formats_rw::sfx::{SfxError, SoundBank};
 use formats_rw::txd;
+use formats_rw::weapon_dat::{self, WeaponDatError};
 
 use crate::model::{
-    Animation, Bone, Key, Material, Mesh, MeshSkin, Model, Node, Primitive, Skeleton, Texture,
-    Track,
+    Animation, Bone, Key, Material, Mesh, MeshSkin, Model, Node, Primitive, Skeleton, Sound,
+    Texture, Track, Weapon,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -45,7 +47,56 @@ pub enum ViceCityError {
         #[source]
         source: io::Error,
     },
+
+    #[error(transparent)]
+    Sound(#[from] SfxError),
+
+    #[error(transparent)]
+    WeaponDat(#[from] WeaponDatError),
+
+    #[error("{0}")]
+    Missing(String),
 }
+
+/// What Chaos FC needs to know about a weapon besides `weapon.dat`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WeaponSpec {
+    /// Name in `weapon.dat`.
+    pub name: &'static str,
+    /// Model of `gta3.img` (its dictionary has the same name).
+    pub model: &'static str,
+    /// Number of the firing sound in the SFX bank.
+    pub fire_sound: usize,
+}
+
+// Sound numbers from the GTAMods list of Vice City sounds, confirmed by ear
+// for the Colt 45 (50), the Uzi (54) and the Ruger (74). Model names are
+// used until the IDE files are read.
+pub const COLT45: WeaponSpec = WeaponSpec {
+    name: "Colt45",
+    model: "colt45",
+    fire_sound: 50,
+};
+pub const UZI: WeaponSpec = WeaponSpec {
+    name: "Uzi",
+    model: "uzi",
+    fire_sound: 54,
+};
+pub const M4: WeaponSpec = WeaponSpec {
+    name: "m4",
+    model: "m4",
+    fire_sound: 74,
+};
+/// Vice City's other assault rifle (the AK47 of GTA III is not in the game).
+pub const RUGER: WeaponSpec = WeaponSpec {
+    name: "Ruger",
+    model: "ruger",
+    fire_sound: 74,
+};
+
+/// Frames per second of the animation instants of `weapon.dat` (see
+/// docs/formats/weapon-dat.md).
+const WEAPON_DAT_FPS: f32 = 30.0;
 
 /// The player's Vice City install.
 pub struct ViceCity {
@@ -59,6 +110,54 @@ impl ViceCity {
         Ok(Self {
             root: root.to_path_buf(),
             archive: ImgArchive::open_pair(&root.join("models").join("gta3"))?,
+        })
+    }
+
+    /// Reads a sound of the SFX bank (`audio/sfx.SDT` and `sfx.RAW`).
+    pub fn load_sound(&mut self, index: usize) -> Result<Sound, ViceCityError> {
+        let (sdt, raw) = sound_bank_paths(&self.root).ok_or_else(|| {
+            ViceCityError::Missing("audio/sfx.SDT ou audio/sfx.RAW introuvable".into())
+        })?;
+        let mut bank = SoundBank::open(&sdt, &raw)?;
+        let samples = bank.read_samples(index)?;
+        Ok(Sound {
+            sample_rate: bank.entries()[index].sample_rate,
+            samples,
+        })
+    }
+
+    /// Loads a weapon: its line of `data/weapon.dat`, its model and
+    /// textures, the firing animation of its animation group and its sound.
+    pub fn load_weapon(&mut self, spec: &WeaponSpec) -> Result<Weapon, ViceCityError> {
+        let path = find_ignoring_case(&self.root, "data")
+            .and_then(|data| find_ignoring_case(&data, "weapon.dat"))
+            .ok_or_else(|| ViceCityError::Missing("data/weapon.dat introuvable".into()))?;
+        let bytes = std::fs::read(&path).map_err(|source| ViceCityError::Io { path, source })?;
+        let info = weapon_dat::parse_weapon_dat(&String::from_utf8_lossy(&bytes))?
+            .into_iter()
+            .find(|info| info.name.eq_ignore_ascii_case(spec.name))
+            .ok_or_else(|| ViceCityError::Missing(format!("{} absent de weapon.dat", spec.name)))?;
+
+        // HYPOTHÈSE: the firing animation of a group is "<group>_fire"
+        // (colt45_fire, UZI_fire, RIFLE_fire in gta3.img).
+        let fire_name = format!("{}_fire", info.anim_group);
+        let fire_animation = self
+            .load_animations(&info.anim_group)?
+            .into_iter()
+            .find(|animation| animation.name.eq_ignore_ascii_case(&fire_name))
+            .ok_or_else(|| {
+                ViceCityError::Missing(format!("{fire_name} absente de {}.ifp", info.anim_group))
+            })?;
+
+        Ok(Weapon {
+            name: info.name,
+            model: self.load_model(spec.model)?,
+            textures: self.load_textures(spec.model)?,
+            fire_animation,
+            fire_loop: info.anim_loop.map(|frame| frame / WEAPON_DAT_FPS),
+            muzzle: info.fire_offset,
+            range: info.range,
+            fire_sound: self.load_sound(spec.fire_sound)?,
         })
     }
 
@@ -120,6 +219,30 @@ impl ViceCity {
         let bytes = self.archive.read(&entry)?;
         Ok((entry.name, bytes))
     }
+}
+
+/// Paths of the sound bank `audio/sfx.SDT` and `audio/sfx.RAW` of the install
+/// `root`. Names are matched ignoring case (the install has `Audio/sfx.RAW`).
+pub fn sound_bank_paths(root: &Path) -> Option<(PathBuf, PathBuf)> {
+    let audio = find_ignoring_case(root, "audio")?;
+    Some((
+        find_ignoring_case(&audio, "sfx.sdt")?,
+        find_ignoring_case(&audio, "sfx.raw")?,
+    ))
+}
+
+/// Entry of `dir` named `name`, ignoring case.
+fn find_ignoring_case(dir: &Path, name: &str) -> Option<PathBuf> {
+    std::fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .find(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .eq_ignore_ascii_case(name)
+        })
+        .map(|entry| entry.path())
 }
 
 /// Decodes every texture of a TXD file. `name` is used in error messages.

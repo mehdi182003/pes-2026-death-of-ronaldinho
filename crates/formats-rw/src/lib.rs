@@ -9,6 +9,8 @@ pub mod dff;
 pub mod ifp;
 pub mod img;
 pub mod rw;
+pub mod sfx;
 pub mod txd;
+pub mod weapon_dat;
 
 mod text;

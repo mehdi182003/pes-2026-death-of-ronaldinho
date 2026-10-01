@@ -14,6 +14,8 @@ Règles :
 | DFF (modèles) | Vice City | [dff.md](dff.md) | Vérifié sur les 4617 DFF ; texture : une hypothèse |
 | TXD (textures) | Vice City | [txd.md](txd.md) | Vérifié sur 1399 TXD ; ordre des couleurs des palettes à confirmer à l'œil |
 | IFP (animations) | Vice City | [ifp.md](ifp.md) | Vérifié sur les 29 IFP ; liens de la variante 48 octets : hypothèse |
+| SFX (sons) | Vice City | [sfx.md](sfx.md) | Vérifié sur la banque ; numéros des sons d'armes : à confirmer à l'oreille |
+| weapon.dat (armes) | Vice City | [weapon-dat.md](weapon-dat.md) | Vérifié sur les 37 armes ; unités des instants : hypothèse |
 
 ## Outils d'inspection
 

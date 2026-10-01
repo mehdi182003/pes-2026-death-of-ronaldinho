@@ -4,6 +4,7 @@ members = [
     "crates/formats-rw",
     "crates/formats-pes",
     "crates/asset-bridge",
+    "crates/bevy-bridge",
     "crates/retarget",
     "crates/asset-tools",
     "crates/game",
@@ -24,10 +25,12 @@ publish = false
 formats-rw = { path = "crates/formats-rw" }
 formats-pes = { path = "crates/formats-pes" }
 asset-bridge = { path = "crates/asset-bridge" }
+bevy-bridge = { path = "crates/bevy-bridge" }
 retarget = { path = "crates/retarget" }
 
 # Engine
-bevy = "=0.19.1"
+# "wav": plays the Vice City sounds, wrapped in WAV in memory.
+bevy = { version = "=0.19.1", features = ["wav"] }
 bevy_rapier3d = "=0.36.0"
 bevy_egui = "=0.42.0"
 

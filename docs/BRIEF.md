@@ -112,6 +112,17 @@ La crate game n'importe jamais formats-rw ni formats-pes directement. Changer de
 - La pose de liaison des os vient de l'inverse des matrices inverses de liaison du skin, pas des frames, car quelques modèles ont des frames hors pose de liaison.
 - Seul le premier niveau de mipmap des textures est utilisé pour l'instant.
 
+**Décisions (J3) :**
+
+- Nouvelle crate **`bevy-bridge`** (7ᵉ crate) : elle instancie dans Bevy les types neutres d'`asset-bridge` (modèles texturés et skinnés, calques d'animation, sons). Le visualiseur et le jeu la partagent ; `game` dépend d'`asset-bridge` et de `bevy-bridge`, jamais des crates de formats.
+- Les animations se superposent par **calques** : un calque n'anime que les os qu'il contient (par exemple `colt45_fire`, qui ne touche que le bras droit, par-dessus la pose de repos).
+- Les sons de la banque SFX sont joués via la feature `wav` de Bevy : chaque son est emballé en WAV en mémoire.
+- Les paramètres des armes viennent de `data/weapon.dat` (portée, boucle de tir, instant du coup, point de sortie), pas de constantes inventées. Le modèle et le numéro de son de chaque arme sont décrits dans `asset_bridge::vice_city` (`COLT45`, `UZI`, `M4`) en attendant la lecture des fichiers IDE.
+- Le jeu repère le monde en Y vers le haut (Bevy) ; les modèles de Vice City sont tournés par `retarget::VICE_CITY_TO_Y_UP`. L'arme est fixée telle quelle au nœud « R Hand » du personnage.
+- Visée comme dans GTA : le curseur désigne un point (rayon depuis la caméra), le tireur pivote vers lui et la balle part du canon **vers ce point**, pas dans l'axe du bras animé (qui pointe vers le haut dans `colt45_fire`). Le tir est un lancer de rayon contre le sol et des cibles en boîtes ; la physique (Rapier) arrivera avec le foot (J7).
+- L'arme est fixée telle quelle au nœud « R Hand » : confirmé à l'œil.
+- Armes jouables en J3 : Colt 45, Uzi et Ruger (touches 1, 2, 3). Vice City n'a pas d'AK47 : le Ruger le remplace (choix de Mokhmad). **Le bazooka** (arme à projectile : roquette, explosion, pose `IDLE_ROCKET`) est reporté à J9.
+
 ```text
 chaos-fc/
 ├── Cargo.toml            (workspace)
@@ -120,6 +131,7 @@ chaos-fc/
 │   ├── formats-rw/       IMG, DFF, TXD, IFP, SFX
 │   ├── formats-pes/      AFS, décompression, modèles, animations
 │   ├── asset-bridge/     types neutres + cache d'extraction
+│   ├── bevy-bridge/      types neutres → Bevy (modèles, animations, sons)
 │   ├── retarget/         squelettes, échelles, axes
 │   ├── asset-tools/      CLI dump et extraction + visualiseur
 │   └── game/             application Bevy
@@ -217,13 +229,13 @@ On valide d'abord que les assets des deux jeux sont lisibles (J1 à J5), avant d
 | J0 | Workspace Cargo, `config.toml`, `.gitignore`, CI (fmt, clippy, tests) | `cargo test` passe ; le jeu refuse de démarrer sans chemins valides. **Validé le 1er octobre 2026.** |
 | J1 | Lecture IMG/DIR et DFF de Vice City | Tommy s'affiche en T-pose, géométrie correcte, dans le visualiseur. **Validé le 1er octobre 2026** (Tommy et le Colt 45 vérifiés par Mokhmad). |
 | J2 | TXD + IFP | Tommy texturé joue son animation de course en boucle. **Validé le 1er octobre 2026** (Tommy texturé court en boucle, vérifié par Mokhmad). |
-| J3 | Armes Vice City | Tommy tient une arme, tire dans une scène vide, avec le son d'origine. |
+| J3 | Armes Vice City | Tommy tient une arme, tire dans une scène vide, avec le son d'origine. **Validé le 1er octobre 2026** (Colt 45, Uzi et Ruger : prise en main, visée, rythme et sons vérifiés par Mokhmad). |
 | J4 | Lecture AFS et décompression PES 6 | Liste complète des fichiers internes extraits et identifiés. |
 | J5 | Modèle joueur PES 6 | Un joueur PES texturé s'affiche à côté de Tommy, à la bonne échelle. |
 | J6 | Squelettes et retargeting | Une même animation joue correctement sur Tommy et sur un joueur PES. |
 | J7 | Foot minimal | Terrain, ballon physique, un joueur contrôlé, buts qui comptent. |
 | J8 | 3 contre 3 avec IA basique | Un match jouable de bout en bout, sans Tommy. |
-| J9 | Tommy dans le match | Bascule foot/arme, joueurs abattus en ragdoll, corps persistants. |
+| J9 | Tommy dans le match | Bascule foot/arme, joueurs abattus en ragdoll, corps persistants. Bazooka (roquette, explosion). |
 | J10 | Arbitre | L'arbitre poursuit et plaque Tommy après un tir. |
 | J11 | 11 contre 11, stade PES, réglages | Match complet stable, ressenti validé par Mokhmad. |
 

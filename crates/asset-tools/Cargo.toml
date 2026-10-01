@@ -11,5 +11,7 @@ default-run = "asset-tools"
 anyhow.workspace = true
 asset-bridge.workspace = true
 bevy.workspace = true
+bevy-bridge.workspace = true
 clap.workspace = true
 formats-rw.workspace = true
+retarget.workspace = true

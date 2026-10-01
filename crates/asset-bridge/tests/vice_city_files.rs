@@ -12,6 +12,7 @@ use formats_rw::dff::{self, Clump, Matrix};
 use formats_rw::ifp;
 use formats_rw::img::{DIR_ENTRY_SIZE, DirEntry, ImgArchive};
 use formats_rw::rw::{self, Version};
+use formats_rw::sfx::SoundBank;
 use formats_rw::txd::{self, raster_format};
 
 fn open_gta3(vice_city: &Path) -> ImgArchive {
@@ -526,4 +527,95 @@ fn run_player_binds_to_the_player_model() {
 
     // Weapon animations live in gta3.img.
     assert!(!game.load_animations("colt45").unwrap().is_empty());
+}
+
+/// The sound bank: its table covers the RAW file exactly, sound after sound.
+#[test]
+fn sound_bank_is_consistent() {
+    let Some(vice_city) = game_dir(Game::ViceCity) else {
+        return;
+    };
+    let (sdt, raw) = asset_bridge::vice_city::sound_bank_paths(&vice_city).unwrap();
+    let mut bank = SoundBank::open(&sdt, &raw).unwrap();
+    let entries = bank.entries().to_vec();
+    assert_eq!(entries.len(), 9941);
+    assert_eq!(entries[0].offset, 0);
+    assert!(
+        entries
+            .windows(2)
+            .all(|pair| pair[0].offset + pair[0].size == pair[1].offset)
+    );
+    let last = entries.last().unwrap();
+    let raw_len = std::fs::metadata(&raw).unwrap().len();
+    assert_eq!(u64::from(last.offset + last.size), raw_len);
+    // From 2000 Hz (39 sounds below 8000 Hz) to 44100 Hz.
+    assert!(entries.iter().all(|entry| entry.sample_rate > 0));
+
+    // Sounds 50 and 51: "fire Pistol" in the GTAMods list.
+    for index in [50, 51] {
+        let samples = bank.read_samples(index).unwrap();
+        assert_eq!(samples.len(), entries[index].size as usize / 2);
+        assert!((0.05..3.0).contains(&entries[index].duration()));
+    }
+}
+
+#[test]
+fn weapon_dat_describes_the_colt45() {
+    let Some(vice_city) = game_dir(Game::ViceCity) else {
+        return;
+    };
+    let bytes = std::fs::read(vice_city.join("data").join("weapon.dat")).unwrap();
+    let weapons =
+        formats_rw::weapon_dat::parse_weapon_dat(&String::from_utf8_lossy(&bytes)).unwrap();
+    let colt = weapons.iter().find(|w| w.name == "Colt45").unwrap();
+    assert_eq!(colt.fire_type, "INSTANT_HIT");
+    assert_eq!(colt.range, 30.0);
+    assert_eq!(colt.fire_offset, [0.30, 0.0, 0.09]);
+    assert_eq!(colt.anim_group, "colt45");
+    assert_eq!(colt.anim_loop, [11.0, 18.0, 14.0]);
+    assert_eq!(colt.model_id, 274);
+    // Its animation group names an IFP of gta3.img holding colt45_fire.
+    let mut archive = open_gta3(&vice_city);
+    let entry = archive.find("colt45.ifp").unwrap().clone();
+    let package = ifp::parse_ifp(&archive.read(&entry).unwrap()).unwrap();
+    let fire = package.find("colt45_fire").unwrap();
+    // The firing point lies inside the animation (30 frames per second).
+    assert!(colt.anim_loop[2] / 30.0 < fire.duration());
+    assert!(weapons.iter().any(|w| w.name == "Uzi") && weapons.iter().any(|w| w.name == "m4"));
+}
+
+#[test]
+fn colt45_loads_as_a_weapon() {
+    let Some(vice_city) = game_dir(Game::ViceCity) else {
+        return;
+    };
+    let mut game = ViceCity::open(&vice_city).unwrap();
+    let colt = game.load_weapon(&asset_bridge::vice_city::COLT45).unwrap();
+    assert_eq!(colt.name, "Colt45");
+    assert_eq!(colt.fire_animation.name, "colt45_fire");
+    // Arms only: clavicle, upper arm, forearm and hand of the right side.
+    assert_eq!(colt.fire_animation.tracks.len(), 4);
+    let [start, end, fire] = colt.fire_loop;
+    assert!(start < fire && fire < end && end <= colt.fire_animation.duration);
+    // The model's material finds its texture in the dictionary.
+    let texture = colt.model.meshes[0].primitives[0]
+        .material
+        .texture
+        .clone()
+        .unwrap();
+    assert!(
+        colt.textures
+            .iter()
+            .any(|t| t.name.eq_ignore_ascii_case(&texture))
+    );
+    assert!((0.5..2.0).contains(&colt.fire_sound.duration()));
+    assert_eq!(&colt.fire_sound.to_wav()[..4], b"RIFF");
+
+    for spec in [
+        asset_bridge::vice_city::UZI,
+        asset_bridge::vice_city::M4,
+        asset_bridge::vice_city::RUGER,
+    ] {
+        game.load_weapon(&spec).unwrap();
+    }
 }
