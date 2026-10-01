@@ -11,3 +11,8 @@ name = "chaos-fc"
 path = "src/main.rs"
 
 [dependencies]
+asset-bridge.workspace = true
+bevy.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
