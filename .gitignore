@@ -1,0 +1,40 @@
+# Build Rust
+/target/
+
+# Configuration locale du joueur (chemins vers ses copies des jeux)
+/config.toml
+
+# Cache d'extraction : normalement dans le dossier de cache de l'utilisateur,
+# mais on bloque aussi toute copie locale par sécurité.
+/cache/
+/extracted/
+/.chaos-fc-cache/
+
+# ---------------------------------------------------------------------------
+# Garde-fou légal : aucun fichier issu de GTA Vice City ou de PES ne doit
+# entrer dans le dépôt. Ces extensions sont bloquées partout.
+# La CI vérifie aussi que rien de tel n'est suivi par Git.
+# ---------------------------------------------------------------------------
+# RenderWare / GTA Vice City
+*.img
+*.dir
+*.dff
+*.txd
+*.ifp
+*.col
+*.sfx
+*.sdt
+*.raw
+*.adf
+# PES 6
+*.afs
+*.bin
+*.str
+# Dumps et extractions bruts
+*.dump
+
+# Éditeurs et OS
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
