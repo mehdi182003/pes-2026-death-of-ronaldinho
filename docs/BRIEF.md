@@ -21,6 +21,13 @@ Aucun fichier issu de GTA Vice City ou de PES ne doit jamais entrer dans le dép
 5. **Références open source autorisées** pour comprendre les formats : la documentation du wiki GTAMods, librw, OpenRW, les outils de la scène de modding PES. Respecter leurs licences si du code est repris.
 6. **Tests sans assets commités.** Les tests qui lisent de vrais fichiers sont ignorés automatiquement si les chemins des jeux ne sont pas configurés.
 
+**Mise en œuvre (J0) :**
+
+- Le `.gitignore` bloque `config.toml`, les dossiers de cache locaux et les extensions de fichiers des jeux (`.img`, `.dir`, `.dff`, `.txd`, `.ifp`, `.col`, `.sfx`, `.sdt`, `.raw`, `.adf`, `.afs`, `.bin`, `.str`, `.dump`). Un job de CI échoue si un fichier portant l'une de ces extensions est suivi par Git.
+- `config.toml` est cherché dans le dossier courant, ou à l'emplacement donné par la variable d'environnement `CHAOS_FC_CONFIG`. Section `[paths]`, clés `vice_city` et `pes6`. Un chemin relatif part du dossier du fichier de configuration. Modèle : `config.example.toml`.
+- Un dossier n'est accepté que s'il ressemble à l'installation attendue. Vice City : `models/gta3.img` et `models/gta3.dir` présents. PES 6 : au moins une archive `.afs` dans un sous-dossier `dat` (HYPOTHÈSE à confirmer sur la copie de Mokhmad). Toutes les erreurs sont listées d'un coup, avec la clé fautive.
+- `cargo run -p asset-tools -- check-config` vérifie les chemins sans compiler Bevy.
+
 ## Règles du jeu
 
 Le match continue quoi qu'il arrive, Tommy tire sans limite de munitions, et seul l'arbitre tente de l'arrêter en le plaquant.
@@ -61,6 +68,25 @@ Tout est en Rust stable : Bevy pour le moteur, Rapier pour la physique, binrw po
 
 **Version de Bevy :** l'API de Bevy change beaucoup entre versions. Claude Code fige une version précise dans `Cargo.toml` au démarrage, et vérifie la documentation de cette version exacte avant d'écrire du code Bevy, au lieu de se fier à sa mémoire. Même règle pour bevy\_rapier3d et bevy\_egui, dont les versions doivent être compatibles avec celle de Bevy.
 
+**Versions figées (J0, 1er octobre 2026) :** toutes les dépendances sont déclarées une seule fois dans `[workspace.dependencies]` avec une version exacte (`=x.y.z`), et `Cargo.lock` est versionné.
+
+| Crate | Version | Remarque |
+| --- | --- | --- |
+| bevy | 0.19.1 | Dernière version stable (0.20 encore en release candidate). |
+| bevy\_rapier3d | 0.36.0 | Dépend de bevy ^0.19. |
+| bevy\_egui | 0.42.0 | Dépend de bevy ^0.19. |
+| binrw | 0.15.2 | |
+| texpresso | 2.0.2 | |
+| serde / toml | 1.0.229 / 1.1.6 | |
+| thiserror / anyhow | 2.0.21 / 1.0.104 | |
+| tracing | 0.1.44 | Côté jeu, Bevy installe lui-même le subscriber. |
+| clap | 4.6.7 | |
+| tempfile | 3.27.0 | Tests uniquement. |
+
+La toolchain Rust est épinglée dans `rust-toolchain.toml` pour que fmt et clippy donnent le même résultat en local et en CI. La version minimale de Rust est la 1.95, celle exigée par Bevy 0.19. En debug, les dépendances sont compilées en `opt-level = 3` et nos crates en `opt-level = 1`, sinon Bevy est inutilisable.
+
+**Prérequis Windows :** rustup, plus les Build Tools de Visual Studio avec la charge de travail « Développement Desktop en C++ » (linker MSVC et SDK Windows). VS Code ne suffit pas, mais peut servir d'éditeur.
+
 ## Architecture du workspace
 
 Trois couches : deux crates de formats lisent les fichiers des jeux, asset-bridge les convertit en types neutres, et l'application Bevy ne manipule que ces types.
@@ -68,6 +94,8 @@ Trois couches : deux crates de formats lisent les fichiers des jeux, asset-bridg
 &#91;embedded content: architecture du workspace · 6 crates\]
 
 La crate game n'importe jamais formats-rw ni formats-pes directement. Changer de version de PES ne touche donc que formats-pes et asset-bridge. Le cache d'extraction est stocké dans le dossier de cache de l'utilisateur, hors du dépôt.
+
+**Décisions (J0) :** la lecture et la validation des chemins des jeux vivent dans `asset-bridge` (module `config`), partagées par `game` et `asset-tools`. Le binaire du jeu s'appelle `chaos-fc` (`cargo run -p game`).
 
 ```text
 chaos-fc/
@@ -163,9 +191,11 @@ Le cœur du projet est un moteur de foot crédible. Tommy, l'arbitre et les corp
 
 On valide d'abord que les assets des deux jeux sont lisibles (J1 à J5), avant d'écrire la moindre ligne d'IA de foot. Un jalon n'est terminé que lorsque son critère est validé par Mokhmad sur sa machine.
 
+**Installations disponibles chez Mokhmad (1er octobre 2026) :** GTA Vice City (PC) installé ; PES 6 pas encore.
+
 | Jalon | Livrable | Critère de réussite |
 | --- | --- | --- |
-| J0 | Workspace Cargo, `config.toml`, `.gitignore`, CI (fmt, clippy, tests) | `cargo test` passe ; le jeu refuse de démarrer sans chemins valides. |
+| J0 | Workspace Cargo, `config.toml`, `.gitignore`, CI (fmt, clippy, tests) | `cargo test` passe ; le jeu refuse de démarrer sans chemins valides. **Validé le 1er octobre 2026.** |
 | J1 | Lecture IMG/DIR et DFF de Vice City | Tommy s'affiche en T-pose, géométrie correcte, dans le visualiseur. |
 | J2 | TXD + IFP | Tommy texturé joue son animation de course en boucle. |
 | J3 | Armes Vice City | Tommy tient une arme, tire dans une scène vide, avec le son d'origine. |
@@ -190,3 +220,4 @@ Petites étapes, un commit par étape, et toujours une vérification par Mokhmad
 - **Décisions** : toute décision de design prise en cours de route est ajoutée à `docs/BRIEF.md`, dans la section concernée.
 - **Dépendances** : versions figées dans `Cargo.toml`, documentation de la version exacte consultée avant usage.
 - **Langue** : code et identifiants en anglais, documentation et échanges en français.
+- **Précisions (J0)** : les commentaires de code sont en anglais (sauf le marqueur `// HYPOTHÈSE:`) ; les messages affichés au joueur et les messages de commit sont en français. Chaque jalon est développé sur une branche `jN`, fusionnée dans `main` après validation par Mokhmad.

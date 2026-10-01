@@ -1,0 +1,2 @@
+# Normalise les fins de ligne en LF dans le dépôt et la copie de travail.
+* text=auto eol=lf

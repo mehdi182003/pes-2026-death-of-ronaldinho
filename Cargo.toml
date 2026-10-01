@@ -1,0 +1,55 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/formats-rw",
+    "crates/formats-pes",
+    "crates/asset-bridge",
+    "crates/retarget",
+    "crates/asset-tools",
+    "crates/game",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+# Minimum required by Bevy 0.19.
+rust-version = "1.95"
+publish = false
+
+# All versions are pinned exactly (see docs/BRIEF.md, "Stack technique").
+# Bevy, bevy_rapier3d and bevy_egui must stay compatible with each other:
+# bevy_rapier3d 0.36.0 and bevy_egui 0.42.0 both target Bevy ^0.19.
+[workspace.dependencies]
+# Internal crates
+formats-rw = { path = "crates/formats-rw" }
+formats-pes = { path = "crates/formats-pes" }
+asset-bridge = { path = "crates/asset-bridge" }
+retarget = { path = "crates/retarget" }
+
+# Engine
+bevy = "=0.19.1"
+bevy_rapier3d = "=0.36.0"
+bevy_egui = "=0.42.0"
+
+# Binary formats
+binrw = "=0.15.2"
+texpresso = "=2.0.2"
+
+# Config, errors, logs, CLI
+serde = { version = "=1.0.229", features = ["derive"] }
+toml = "=1.1.6"
+thiserror = "=2.0.21"
+anyhow = "=1.0.104"
+tracing = "=0.1.44"
+clap = { version = "=4.6.7", features = ["derive"] }
+
+# Tests
+tempfile = "=3.27.0"
+
+# Bevy is very slow in debug builds: optimize dependencies, keep our own
+# crates lightly optimized so they still compile quickly.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
