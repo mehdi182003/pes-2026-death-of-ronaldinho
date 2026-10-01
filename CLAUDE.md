@@ -19,7 +19,7 @@ Le brief de référence est [`docs/BRIEF.md`](docs/BRIEF.md). **Le relire avant 
 - **Formats** : jamais de champ inventé. Tout champ incertain est marqué `// HYPOTHÈSE:` dans le code et listé dans `docs/formats/<format>.md`.
 - **Vérifications visuelles** : l'IA ne juge pas un rendu ni un ressenti. Demander à Mokhmad de lancer le build et de décrire ou capturer le résultat.
 - **Dépendances** : versions figées (`=x.y.z`) dans `[workspace.dependencies]` du `Cargo.toml` racine. Avant d'écrire du code Bevy, bevy_rapier3d ou bevy_egui, consulter la documentation **de la version exacte figée** (sources dans le registre Cargo ou docs.rs à cette version), jamais la mémoire.
-- **Architecture** : la crate `game` n'importe jamais `formats-rw` ni `formats-pes` ; elle passe par `asset-bridge`.
+- **Architecture** : la crate `game` n'importe jamais `formats-rw` ni `formats-pes` ; elle passe par `asset-bridge` (types neutres) et `bevy-bridge` (types neutres → Bevy).
 - **Langue** : code, identifiants et commentaires en anglais (sauf le marqueur `// HYPOTHÈSE:`) ; documentation, messages affichés au joueur, messages de commit et échanges en français.
 
 ## Commandes utiles

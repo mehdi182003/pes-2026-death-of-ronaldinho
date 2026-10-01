@@ -112,6 +112,12 @@ La crate game n'importe jamais formats-rw ni formats-pes directement. Changer de
 - La pose de liaison des os vient de l'inverse des matrices inverses de liaison du skin, pas des frames, car quelques modèles ont des frames hors pose de liaison.
 - Seul le premier niveau de mipmap des textures est utilisé pour l'instant.
 
+**Décisions (J3) :**
+
+- Nouvelle crate **`bevy-bridge`** (7ᵉ crate) : elle instancie dans Bevy les types neutres d'`asset-bridge` (modèles texturés et skinnés, calques d'animation, sons). Le visualiseur et le jeu la partagent ; `game` dépend d'`asset-bridge` et de `bevy-bridge`, jamais des crates de formats.
+- Les animations se superposent par **calques** : un calque n'anime que les os qu'il contient (par exemple `colt45_fire`, qui ne touche que le bras droit, par-dessus la pose de repos).
+- Les sons de la banque SFX sont joués via la feature `wav` de Bevy : chaque son est emballé en WAV en mémoire.
+
 ```text
 chaos-fc/
 ├── Cargo.toml            (workspace)
@@ -120,6 +126,7 @@ chaos-fc/
 │   ├── formats-rw/       IMG, DFF, TXD, IFP, SFX
 │   ├── formats-pes/      AFS, décompression, modèles, animations
 │   ├── asset-bridge/     types neutres + cache d'extraction
+│   ├── bevy-bridge/      types neutres → Bevy (modèles, animations, sons)
 │   ├── retarget/         squelettes, échelles, axes
 │   ├── asset-tools/      CLI dump et extraction + visualiseur
 │   └── game/             application Bevy

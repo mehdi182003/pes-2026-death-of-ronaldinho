@@ -1,0 +1,11 @@
+[package]
+name = "bevy-bridge"
+description = "Brings the engine-neutral assets of asset-bridge into Bevy: textured and skinned models, animations, sounds."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+asset-bridge.workspace = true
+bevy.workspace = true
