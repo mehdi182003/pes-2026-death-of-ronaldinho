@@ -71,15 +71,21 @@ HYPOTHÈSE : `R = Rz·Ry·Rx` (X d'abord). Avec cet ordre, les articulations des
 
 ## Emplacements de texture d'un corps de joueur
 
-L'instruction `02` du programme de dessin choisit l'emplacement de texture. Sur un corps (n° 1064), d'après la place des triangles sur le corps et la partie de la texture qu'ils utilisent (`asset_bridge::pes6::PlayerSlot`) :
+L'instruction `02` du programme de dessin choisit l'emplacement de texture. **Les numéros changent d'une famille de corps à l'autre** (au moins huit numérotations parmi les 581 corps à 19 os) : le rôle de chaque emplacement se déduit de sa géométrie (`asset_bridge::pes6::PlayerSlot::classify`), dans cet ordre :
 
-| Emplacement | Partie du corps | Texture |
-| --- | --- | --- |
-| 1 | maillot, manches, short, chaussettes | tenue 512 × 256 : vérifié, les coordonnées tombent exactement sur les zones de la tenue |
-| 5, 10 | fines bandes des bras ; arrière des jambes (texture répétée) | HYPOTHÈSE : la tenue aussi |
-| 4 | pieds | HYPOTHÈSE : la chaussure (seul le tiers gauche de la texture est utilisé) |
-| 0, 7 | bras, mains, cou | HYPOTHÈSE : la peau ; pas de texture de peau trouvée, couleur moyenne du visage |
-| 2, 3, 6, 8, 9 | petites zones du torse, du dos et du short | numéros, nom, écusson ? Pas encore affichés |
+| Règle | Rôle |
+| --- | --- |
+| tous les sommets sous 70 unités | chaussures |
+| tous les sommets au bout des bras (\|x\| > 300) | peau (mains) |
+| moins de 60 sommets | marquage (numéro, nom, écusson) : pas encore affiché |
+| toutes les coordonnées u au bord droit (u > 0,9) | tenue (col, poignets) |
+| grande zone : celle qui a le plus de sommets au milieu du torse | tenue |
+| autre grande zone qui atteint les bras (\|x\| > 200) ou les jambes (sous 300) | peau |
+| autre grande zone, cantonnée au tronc | marquage (les numéros du corps n° 1010) |
+
+Vérifié sur les corps 995, 1010 et 1064 (test `body_slots_get_their_role_from_the_geometry`), et à l'œil sur le n° 1010. HYPOTHÈSE pour les autres corps.
+
+**Familles de corps** : avec une même tenue, tous les corps ne donnent pas un joueur. Le n° 1064 est un corps de staff (seuls les survêtements et costumes y sont symétriques), le n° 995 porte un pantalon long (gardien). Le n° 1010 est un joueur de champ : avec la tenue n° 419, deux manches jaunes, un short bleu et des chaussettes jaunes.
 
 ## Repère et échelle
 
@@ -91,11 +97,12 @@ L'instruction `02` du programme de dessin choisit l'emplacement de texture. Sur 
 
 | Numéro | Contenu |
 | --- | --- |
-| 1060 et voisins (dont 1064) | corps de joueur en T, sans tête, 19 os, 39 parties, 5 niveaux de détail |
+| 995 à 1116 environ | corps en T, sans tête, 19 os, plusieurs niveaux de détail : 1010 joueur de champ, 995 gardien (pantalon long), 1064 staff |
 | 288 à 297 | accessoires du terrain d'entraînement : 17 petits modèles et 24 textures (pas des joueurs) |
 | 409 à 434 | textures de tenues lisibles, 512 × 256 : maillot, short et chaussettes (419 : jaune et bleu ; 420 : rouge et bleu ; 421 : bleu et blanc ; 426 : blanc...) |
 | 5322 et voisins (chaussures) | 5322/0/0 : chaussure (tige et semelle), 256 × 256 |
 | 1891 à 2937 (visages) | tête : 2 modèles (la même tête en deux niveaux de détail) et une texture de visage ; se place sur l'os 16 du corps |
+| 4448 à 5316 (coiffures) | un modèle de cheveux et deux textures (la seconde plus petite), dans le repère de la tête |
 
 Les grandes textures de maillots sont chiffrées (voir [afs.md](afs.md)).
 
@@ -108,5 +115,5 @@ Test `player_body_gets_its_head_on_the_shoulders` : la tête se place au-dessus 
 Pour voir un joueur à côté de Tommy :
 
 ```sh
-cargo run -p asset-tools --bin viewer -- player --pes 0_text:1064 --pes-texture 0_text:419 --pes-boots 0_text:5322/0/0 --pes-head 0_text:1943
+cargo run -p asset-tools --bin viewer -- player --pes 0_text:1010 --pes-texture 0_text:419 --pes-boots 0_text:5322/0/0 --pes-head 0_text:1943 --pes-hair 0_text:4570
 ```
