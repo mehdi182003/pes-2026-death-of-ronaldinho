@@ -4,4 +4,6 @@
 //! owns the configuration of the game install paths and the extraction cache.
 //! The `game` crate only ever talks to this crate, never to the format crates.
 
+pub mod cache;
 pub mod config;
+pub mod testing;

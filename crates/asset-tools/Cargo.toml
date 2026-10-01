@@ -7,5 +7,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+anyhow.workspace = true
 asset-bridge.workspace = true
 clap.workspace = true
+formats-rw.workspace = true
