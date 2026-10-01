@@ -1,11 +1,12 @@
 //! Asset viewer: shows a textured Vice City model, in its bind pose (T-pose
 //! for a character) or playing an animation in a loop, or the textures of a
-//! TXD laid flat.
+//! TXD laid flat. A PES 6 model can be shown alone or next to it.
 //!
 //! ```sh
 //! cargo run -p asset-tools --bin viewer -- player
 //! cargo run -p asset-tools --bin viewer -- player --anim run_player
 //! cargo run -p asset-tools --bin viewer -- --textures D:\ViceCity\txd\LOADSC0.TXD
+//! cargo run -p asset-tools --bin viewer -- player --pes 0_text:431 --pes-texture 0_text:432
 //! ```
 
 use std::f32::consts::FRAC_PI_2;
@@ -15,6 +16,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use asset_bridge::config::{self, Game};
 use asset_bridge::model::{self as neutral, Animation, Model, Texture};
+use asset_bridge::pes6::{Pes6, PesFile};
 use asset_bridge::vice_city::{self, ViceCity, ViceCityError};
 use asset_tools::source::Source;
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
@@ -29,12 +31,21 @@ use clap::Parser;
 #[derive(Parser)]
 #[command(
     name = "viewer",
-    about = "Visualiseur de modèles, d'animations et de textures de GTA Vice City"
+    about = "Visualiseur de modèles, d'animations et de textures de GTA Vice City et de PES 6"
 )]
 struct Args {
     /// Modèle de models/gta3.img, par exemple player ou colt45.
-    #[arg(required_unless_present = "textures")]
+    #[arg(required_unless_present_any = ["textures", "pes"])]
     model: Option<String>,
+
+    /// Modèle de PES 6, <archive>:<numéro>[/<sous-fichier>] (par exemple
+    /// 0_text:431) : seul, ou à côté du modèle de Vice City.
+    #[arg(long, conflicts_with_all = ["textures", "anim"])]
+    pes: Option<PesFile>,
+
+    /// Texture du modèle de PES 6 (par exemple 0_text:432).
+    #[arg(long, requires = "pes")]
+    pes_texture: Option<PesFile>,
 
     /// Dictionnaire de textures du modèle (par défaut : celui du même nom).
     #[arg(long)]
@@ -111,7 +122,14 @@ fn load(args: &Args) -> Result<ViewerScene> {
         return Ok(ViewerScene::new(board, textures, true, None, None));
     }
 
-    let name = args.model.as_deref().expect("clap requires a model");
+    let pes_scene = match &args.pes {
+        Some(file) => Some(load_pes(&config_file, file, args.pes_texture.as_ref())?),
+        None => None,
+    };
+    let Some(name) = args.model.as_deref() else {
+        let (model, textures) = pes_scene.expect("clap requires a model or --pes");
+        return Ok(ViewerScene::new(model, textures, false, None, None));
+    };
     let vice_city = config::read_paths(&config_file)?.check(Game::ViceCity)?;
     let mut game = ViceCity::open(&vice_city)?;
     let model = game.load_model(name)?;
@@ -136,7 +154,70 @@ fn load(args: &Args) -> Result<ViewerScene> {
         }
         None => None,
     };
+    if let Some((pes_model, pes_textures)) = pes_scene {
+        let (model, mut textures) = (beside(model, pes_model), textures);
+        textures.extend(pes_textures);
+        return Ok(ViewerScene::new(model, textures, false, note, None));
+    }
     Ok(ViewerScene::new(model, textures, false, note, animation))
+}
+
+/// A PES 6 model and its texture, the model scaled to metres.
+fn load_pes(
+    config_file: &std::path::Path,
+    file: &PesFile,
+    texture: Option<&PesFile>,
+) -> Result<(Model, Vec<Texture>)> {
+    let pes6 = config::read_paths(config_file)?.check(Game::Pes6)?;
+    let pes = Pes6::open(&pes6)?;
+    let textures = match texture {
+        Some(texture) => vec![pes.load_texture(texture)?],
+        None => Vec::new(),
+    };
+    let mut model = pes.load_model(file, textures.first().map(|t| t.name.as_str()))?;
+    // PES models are Y-up like the viewer; only the units change.
+    let scale = Mat4::from_scale(Vec3::splat(1.0 / retarget::PES6_UNITS_PER_METRE));
+    model.nodes[0].local = (scale * Mat4::from_cols_array(&model.nodes[0].local)).to_cols_array();
+    Ok((model, textures))
+}
+
+/// `base` with `other` added one metre to its right (+X), feet at the same
+/// height, both in their bind pose.
+fn beside(mut base: Model, other: Model) -> Model {
+    let lowest = |model: &Model| {
+        let bind = BindPose::of(model);
+        model
+            .meshes
+            .iter()
+            .flat_map(|mesh| {
+                let world = bind.worlds[mesh.node];
+                mesh.positions
+                    .iter()
+                    .map(move |&p| world.transform_point3(Vec3::from_array(p)).y)
+            })
+            .fold(f32::MAX, f32::min)
+    };
+    let lift = lowest(&base) - lowest(&other);
+    let shift = base.nodes.len() + 1;
+    base.nodes.push(neutral::Node {
+        name: other.name.clone(),
+        parent: None,
+        local: Mat4::from_translation(Vec3::new(1.0, lift, 0.0)).to_cols_array(),
+        bone_id: None,
+    });
+    for node in other.nodes {
+        base.nodes.push(neutral::Node {
+            parent: Some(node.parent.map_or(shift - 1, |parent| parent + shift)),
+            ..node
+        });
+    }
+    base.meshes
+        .extend(other.meshes.into_iter().map(|mesh| neutral::Mesh {
+            node: mesh.node + shift,
+            ..mesh
+        }));
+    base.name = format!("{} + {}", base.name, other.name);
+    base
 }
 
 /// Lays textures side by side on upright quads one metre high, so that they
