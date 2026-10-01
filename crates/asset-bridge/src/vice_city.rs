@@ -69,8 +69,9 @@ pub struct WeaponSpec {
     pub fire_sound: usize,
 }
 
-// HYPOTHÈSE: sound numbers from the GTAMods list of Vice City sounds, to be
-// confirmed by ear; model names until the IDE files are read.
+// Sound numbers from the GTAMods list of Vice City sounds: 50 (Colt 45)
+// confirmed by ear. HYPOTHÈSE for the others, and for the model names until
+// the IDE files are read.
 pub const COLT45: WeaponSpec = WeaponSpec {
     name: "Colt45",
     model: "colt45",
@@ -86,9 +87,15 @@ pub const M4: WeaponSpec = WeaponSpec {
     model: "m4",
     fire_sound: 74,
 };
+/// Vice City's other assault rifle (the AK47 of GTA III is not in the game).
+pub const RUGER: WeaponSpec = WeaponSpec {
+    name: "Ruger",
+    model: "ruger",
+    fire_sound: 74,
+};
 
-/// Frames per second of the animation instants of `weapon.dat`.
-// HYPOTHÈSE: see docs/formats/weapon-dat.md.
+/// Frames per second of the animation instants of `weapon.dat` (see
+/// docs/formats/weapon-dat.md).
 const WEAPON_DAT_FPS: f32 = 30.0;
 
 /// The player's Vice City install.

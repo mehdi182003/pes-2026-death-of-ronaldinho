@@ -121,6 +121,7 @@ La crate game n'importe jamais formats-rw ni formats-pes directement. Changer de
 - Le jeu repère le monde en Y vers le haut (Bevy) ; les modèles de Vice City sont tournés par `retarget::VICE_CITY_TO_Y_UP`. L'arme est fixée telle quelle au nœud « R Hand » du personnage.
 - Visée comme dans GTA : le curseur désigne un point (rayon depuis la caméra), le tireur pivote vers lui et la balle part du canon **vers ce point**, pas dans l'axe du bras animé (qui pointe vers le haut dans `colt45_fire`). Le tir est un lancer de rayon contre le sol et des cibles en boîtes ; la physique (Rapier) arrivera avec le foot (J7).
 - L'arme est fixée telle quelle au nœud « R Hand » : confirmé à l'œil.
+- Armes jouables en J3 : Colt 45, Uzi et Ruger (touches 1, 2, 3). Vice City n'a pas d'AK47 : le Ruger le remplace (choix de Mokhmad). **Le bazooka** (arme à projectile : roquette, explosion, pose `IDLE_ROCKET`) est reporté à J9.
 
 ```text
 chaos-fc/
@@ -234,7 +235,7 @@ On valide d'abord que les assets des deux jeux sont lisibles (J1 à J5), avant d
 | J6 | Squelettes et retargeting | Une même animation joue correctement sur Tommy et sur un joueur PES. |
 | J7 | Foot minimal | Terrain, ballon physique, un joueur contrôlé, buts qui comptent. |
 | J8 | 3 contre 3 avec IA basique | Un match jouable de bout en bout, sans Tommy. |
-| J9 | Tommy dans le match | Bascule foot/arme, joueurs abattus en ragdoll, corps persistants. |
+| J9 | Tommy dans le match | Bascule foot/arme, joueurs abattus en ragdoll, corps persistants. Bazooka (roquette, explosion). |
 | J10 | Arbitre | L'arbitre poursuit et plaque Tommy après un tir. |
 | J11 | 11 contre 11, stade PES, réglages | Match complet stable, ressenti validé par Mokhmad. |
 

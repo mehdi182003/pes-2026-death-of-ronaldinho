@@ -34,7 +34,7 @@ Wiki GTAMods, page « weapon.dat », tableau Vice City. Le fichier lui-même com
 
 ## Hypothèses et inconnues
 
-- HYPOTHÈSE : les instants des colonnes 16 à 22 sont des images à 30 par seconde. Pour le Colt 45, 11, 18 et 14 tombent dans `colt45_fire` (images clés espacées de 1/30 s, durée 0,9 s). À valider à l'œil : le coup doit partir quand le bras finit son recul.
+- Les instants des colonnes 16 à 22 sont des images à 30 par seconde : pour le Colt 45, 11, 18 et 14 tombent dans `colt45_fire` (images clés espacées de 1/30 s, durée 0,9 s), et **le rythme des tirs a été validé à l'œil par Mokhmad**.
 - Le décalage du canon est exprimé dans le repère de l'arme tenue en main, canon le long de +X : `colt45.dff` s'étend de x = 0 à 0,24 m et de z = −0,055 à 0,128, le point (0,30 ; 0 ; 0,09) tombe juste devant le bout du canon. **Confirmé à l'œil par Mokhmad** dans le jeu (la flamme et la traçante partent du canon).
 - Le sens exact de « firing rate » (250 pour presque toutes les armes) n'est pas documenté.
 - Les identifiants de modèle renvoient aux fichiers IDE, pas encore lus : pour l'instant, le modèle d'une arme est désigné par son nom (`colt45.dff`).

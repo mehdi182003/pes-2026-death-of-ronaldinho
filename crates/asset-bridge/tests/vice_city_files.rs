@@ -611,7 +611,11 @@ fn colt45_loads_as_a_weapon() {
     assert!((0.5..2.0).contains(&colt.fire_sound.duration()));
     assert_eq!(&colt.fire_sound.to_wav()[..4], b"RIFF");
 
-    for spec in [asset_bridge::vice_city::UZI, asset_bridge::vice_city::M4] {
+    for spec in [
+        asset_bridge::vice_city::UZI,
+        asset_bridge::vice_city::M4,
+        asset_bridge::vice_city::RUGER,
+    ] {
         game.load_weapon(&spec).unwrap();
     }
 }

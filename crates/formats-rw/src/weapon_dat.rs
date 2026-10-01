@@ -30,9 +30,9 @@ pub struct WeaponInfo {
     pub fire_offset: [f32; 3],
     /// Animation package of `gta3.img` (e.g. `colt45` → `colt45.ifp`).
     pub anim_group: String,
-    /// Shooting animation: loop start, loop end and firing point.
-    // HYPOTHÈSE: these values are frames at 30 per second (Colt45: 11, 18,
-    // 14 fall inside colt45_fire, whose keys are 1/30 s apart).
+    /// Shooting animation: loop start, loop end and firing point, in frames
+    /// at 30 per second (Colt45: 11, 18, 14 fall inside colt45_fire, whose
+    /// keys are 1/30 s apart; the shooting rhythm was validated by eye).
     pub anim_loop: [f32; 3],
     /// Same for the crouching animation.
     pub anim2_loop: [f32; 3],

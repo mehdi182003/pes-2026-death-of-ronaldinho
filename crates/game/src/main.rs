@@ -1,7 +1,8 @@
 //! Chaos FC: the Bevy application.
 //!
-//! Milestone J3: in an empty scene, Tommy holds a Colt 45 and shoots with the
-//! left mouse button, with the animation, timing and sound of Vice City.
+//! Milestone J3: in an empty scene, Tommy holds a weapon of Vice City (Colt
+//! 45, Uzi or Ruger, keys 1 to 3), aims with the mouse and shoots with the
+//! left button, with the animation, timing and sound of the original game.
 
 mod shooting;
 
@@ -16,7 +17,7 @@ use bevy_bridge::{
     AnimationLayer, AnimationLayers, BevyBridgePlugin, BindPose, ModelSpawner, SpawnOptions,
 };
 
-use crate::shooting::{Shooter, ShootingPlugin, Target};
+use crate::shooting::{Carried, Shooter, ShootingPlugin, Target, WeaponLabel};
 
 /// What the scene needs from the player's Vice City, loaded before start.
 #[derive(Resource)]
@@ -25,7 +26,8 @@ struct SceneAssets {
     tommy_textures: Vec<Texture>,
     /// Body animation while standing.
     idle: Arc<Animation>,
-    colt: Arc<Weapon>,
+    /// In the order of the keys 1, 2, 3.
+    weapons: Vec<Arc<Weapon>>,
 }
 
 fn main() -> AppExit {
@@ -79,7 +81,10 @@ fn load_assets(paths: &GamePaths) -> Result<SceneAssets, ViceCityError> {
         tommy: Arc::new(game.load_model("player")?),
         tommy_textures: game.load_textures("player")?,
         idle: Arc::new(idle),
-        colt: Arc::new(game.load_weapon(&vice_city::COLT45)?),
+        weapons: [vice_city::COLT45, vice_city::UZI, vice_city::RUGER]
+            .iter()
+            .map(|spec| game.load_weapon(spec).map(Arc::new))
+            .collect::<Result<_, _>>()?,
     })
 }
 
@@ -129,7 +134,8 @@ fn setup_world(
     commands.spawn((
         Text::new(
             "Chaos FC - jalon J3\n\
-             Souris : viser, clic gauche (maintenu) : tirer avec le Colt 45\n\
+             Souris : viser, clic gauche (maintenu) : tirer\n\
+             Touches 1, 2, 3 : Colt 45, Uzi, Ruger\n\
              Clic droit + glisser : tourner la caméra, molette : zoom",
         ),
         TextFont::from_font_size(15.0),
@@ -140,9 +146,21 @@ fn setup_world(
             ..default()
         },
     ));
+    commands.spawn((
+        WeaponLabel,
+        Text::new(""),
+        TextFont::from_font_size(22.0),
+        Node {
+            position_type: PositionType::Absolute,
+            bottom: Val::Px(16.0),
+            right: Val::Px(20.0),
+            ..default()
+        },
+    ));
 }
 
-/// Tommy, standing in place, the Colt 45 in his right hand.
+/// Tommy, standing in place, his weapons in his right hand (only the one he
+/// holds is visible).
 fn spawn_tommy(
     mut spawner: ModelSpawner,
     mut audio_sources: ResMut<Assets<AudioSource>>,
@@ -155,12 +173,33 @@ fn spawn_tommy(
         &assets.tommy_textures,
         SpawnOptions::default(),
     );
-    let (colt, _) = spawner.spawn(
-        &assets.colt.model,
-        &assets.colt.textures,
-        SpawnOptions::default(),
-    );
     let hand = body.node("R Hand").expect("player.dff has an R Hand bone");
+    let arsenal: Vec<Carried> = assets
+        .weapons
+        .iter()
+        .enumerate()
+        .map(|(index, weapon)| {
+            let (entity, _) =
+                spawner.spawn(&weapon.model, &weapon.textures, SpawnOptions::default());
+            // The weapon model goes on the hand bone as is: confirmed by
+            // eye, the grip sits in the hand.
+            let visibility = if index == 0 {
+                Visibility::Inherited
+            } else {
+                Visibility::Hidden
+            };
+            spawner
+                .commands()
+                .entity(entity)
+                .insert((ChildOf(hand), visibility));
+            Carried {
+                weapon: weapon.clone(),
+                fire_animation: Arc::new(weapon.fire_animation.clone()),
+                entity,
+                sound: audio_sources.add(bevy_bridge::audio_source(&weapon.fire_sound)),
+            }
+        })
+        .collect();
 
     let commands = spawner.commands();
     commands.entity(tommy).insert((
@@ -169,17 +208,8 @@ fn spawn_tommy(
         AnimationLayers(vec![
             AnimationLayer::new(assets.idle.clone(), &assets.tommy, true).looping(),
         ]),
-        Shooter::new(
-            assets.colt.clone(),
-            rotation,
-            assets.tommy.clone(),
-            colt,
-            audio_sources.add(bevy_bridge::audio_source(&assets.colt.fire_sound)),
-        ),
+        Shooter::new(arsenal, rotation, assets.tommy.clone()),
     ));
-    // The weapon model goes on the hand bone as is: confirmed by eye, the
-    // grip sits in the hand.
-    commands.entity(colt).insert(ChildOf(hand));
 }
 
 /// Height of the lowest node of `model` at the start of `animation`, once

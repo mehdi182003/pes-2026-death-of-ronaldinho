@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use asset_bridge::model::{Model, Weapon};
+use asset_bridge::model::{Animation, Model, Weapon};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use bevy_bridge::{AnimationLayer, AnimationLayers};
@@ -20,12 +20,14 @@ impl Plugin for ShootingPlugin {
         app.init_resource::<Aim>().add_systems(
             Update,
             (
+                switch_weapon,
                 aim_with_cursor,
                 face_aim,
                 pull_trigger,
                 fire_rounds,
                 expire_effects,
                 draw_effects,
+                show_weapon,
             )
                 .chain(),
         );
@@ -37,42 +39,102 @@ impl Plugin for ShootingPlugin {
 #[derive(Resource, Default)]
 struct Aim(Option<Vec3>);
 
-/// A character holding a firearm.
+/// A weapon carried by a shooter.
+pub struct Carried {
+    pub weapon: Arc<Weapon>,
+    pub fire_animation: Arc<Animation>,
+    /// Root entity of the weapon model, in the hand (hidden when another
+    /// weapon is held).
+    pub entity: Entity,
+    pub sound: Handle<AudioSource>,
+}
+
+/// A character holding a firearm, chosen among those it carries.
 #[derive(Component)]
 pub struct Shooter {
-    weapon: Arc<Weapon>,
+    arsenal: Vec<Carried>,
+    /// Index of the weapon in hand.
+    current: usize,
     /// Rotation of the character when facing -Z (its model turned upright).
     upright: Quat,
     /// The character's model, to bind the firing animation to its bones.
     body: Arc<Model>,
-    /// Root entity of the weapon model, in the hand.
-    weapon_entity: Entity,
-    sound: Handle<AudioSource>,
     /// Time of the firing layer at the previous frame, to detect when it
     /// passes the firing point.
     last_time: Option<f32>,
 }
 
 impl Shooter {
-    pub fn new(
-        weapon: Arc<Weapon>,
-        upright: Quat,
-        body: Arc<Model>,
-        weapon_entity: Entity,
-        sound: Handle<AudioSource>,
-    ) -> Self {
+    /// Holds the first weapon of `arsenal`.
+    pub fn new(arsenal: Vec<Carried>, upright: Quat, body: Arc<Model>) -> Self {
         Self {
-            weapon,
+            arsenal,
+            current: 0,
             upright,
             body,
-            weapon_entity,
-            sound,
             last_time: None,
         }
     }
 
-    fn is_fire_layer(&self, layer: &AnimationLayer) -> bool {
-        layer.animation().name == self.weapon.fire_animation.name
+    fn held(&self) -> &Carried {
+        &self.arsenal[self.current]
+    }
+
+    /// Name of the weapon in hand.
+    pub fn held_name(&self) -> &str {
+        &self.held().weapon.name
+    }
+
+    fn is_held_fire_layer(&self, layer: &AnimationLayer) -> bool {
+        layer.animation().name == self.held().fire_animation.name
+    }
+}
+
+/// Keys 1 to 9 take the corresponding weapon (same place on AZERTY and
+/// QWERTY keyboards: the physical key counts, not its character).
+fn switch_weapon(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut shooters: Query<(&mut Shooter, &mut AnimationLayers)>,
+    mut visibilities: Query<&mut Visibility>,
+) {
+    const DIGITS: [KeyCode; 9] = [
+        KeyCode::Digit1,
+        KeyCode::Digit2,
+        KeyCode::Digit3,
+        KeyCode::Digit4,
+        KeyCode::Digit5,
+        KeyCode::Digit6,
+        KeyCode::Digit7,
+        KeyCode::Digit8,
+        KeyCode::Digit9,
+    ];
+    let Some(wanted) = DIGITS.iter().position(|&key| keys.just_pressed(key)) else {
+        return;
+    };
+    for (mut shooter, mut layers) in &mut shooters {
+        if wanted >= shooter.arsenal.len() || wanted == shooter.current {
+            continue;
+        }
+        // Stop the firing animation of the previous weapon.
+        let fire_names: Vec<&str> = shooter
+            .arsenal
+            .iter()
+            .map(|carried| carried.fire_animation.name.as_str())
+            .collect();
+        layers
+            .0
+            .retain(|layer| !fire_names.contains(&layer.animation().name.as_str()));
+        shooter.current = wanted;
+        shooter.last_time = None;
+        for (index, carried) in shooter.arsenal.iter().enumerate() {
+            if let Ok(mut visibility) = visibilities.get_mut(carried.entity) {
+                *visibility = if index == wanted {
+                    Visibility::Inherited
+                } else {
+                    Visibility::Hidden
+                };
+            }
+        }
     }
 }
 
@@ -125,19 +187,19 @@ fn pull_trigger(
     mut shooters: Query<(&Shooter, &mut AnimationLayers)>,
 ) {
     for (shooter, mut layers) in &mut shooters {
-        let [loop_start, loop_end, _] = shooter.weapon.fire_loop;
+        let [loop_start, loop_end, _] = shooter.held().weapon.fire_loop;
         let holding = buttons.pressed(MouseButton::Left);
         match layers
             .0
             .iter_mut()
-            .find(|layer| shooter.is_fire_layer(layer))
+            .find(|layer| shooter.is_held_fire_layer(layer))
         {
             Some(layer) => {
                 layer.loop_range = holding.then_some((loop_start, loop_end));
             }
             None if holding => {
                 let mut layer = AnimationLayer::new(
-                    Arc::new(shooter.weapon.fire_animation.clone()),
+                    shooter.held().fire_animation.clone(),
                     &shooter.body,
                     false,
                 );
@@ -164,13 +226,13 @@ fn fire_rounds(
         let Some(time) = layers
             .0
             .iter()
-            .find(|layer| shooter.is_fire_layer(layer))
+            .find(|layer| shooter.is_held_fire_layer(layer))
             .map(|layer| layer.time)
         else {
             shooter.last_time = None;
             continue;
         };
-        let fire_point = shooter.weapon.fire_loop[2];
+        let fire_point = shooter.held().weapon.fire_loop[2];
         let crossed = match shooter.last_time {
             None => time >= fire_point && time < fire_point + 0.1,
             Some(last) if time >= last => last < fire_point && fire_point <= time,
@@ -181,7 +243,8 @@ fn fire_rounds(
         if !crossed {
             continue;
         }
-        let Ok(weapon) = globals.get(shooter.weapon_entity) else {
+        let carried = shooter.held();
+        let Ok(weapon) = globals.get(carried.entity) else {
             continue;
         };
 
@@ -189,19 +252,19 @@ fn fire_rounds(
         // barrel along its +X: confirmed by eye (flash and tracer leave the
         // barrel). As in GTA, the round flies towards the aimed point, not
         // along the barrel of the animated arm.
-        let muzzle = weapon.transform_point(Vec3::from_array(shooter.weapon.muzzle));
+        let muzzle = weapon.transform_point(Vec3::from_array(carried.weapon.muzzle));
         let direction = aim
             .0
             .map(|point| point - muzzle)
             .filter(|towards| towards.length_squared() > 1e-4)
             .unwrap_or(weapon.rotation() * Vec3::X)
             .normalize();
-        let range = shooter.weapon.range;
+        let range = carried.weapon.range;
         let hit = cast_ray(muzzle, direction, range, &targets);
         let end = muzzle + direction * hit.unwrap_or(range);
 
         commands.spawn((
-            AudioPlayer::new(shooter.sound.clone()),
+            AudioPlayer::new(carried.sound.clone()),
             PlaybackSettings::DESPAWN,
         ));
         commands.spawn((
@@ -318,5 +381,20 @@ mod tests {
             ray_box(Vec3::new(3.0, 0.5, 0.0), Vec3::NEG_Z, min, max),
             None
         );
+    }
+}
+
+/// Text showing the weapon in hand.
+#[derive(Component)]
+pub struct WeaponLabel;
+
+fn show_weapon(shooters: Query<&Shooter>, mut labels: Query<&mut Text, With<WeaponLabel>>) {
+    let Ok(shooter) = shooters.single() else {
+        return;
+    };
+    for mut label in &mut labels {
+        if label.0 != shooter.held_name() {
+            label.0 = shooter.held_name().to_owned();
+        }
     }
 }
