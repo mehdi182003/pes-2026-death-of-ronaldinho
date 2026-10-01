@@ -137,8 +137,8 @@ impl Pes6 {
     }
 
     /// A character assembled from a body and, optionally, a head: the
-    /// first model of `body` with `body_texture` on every slot, and every
-    /// model of `head` with the first texture of `head`, placed on the
+    /// first model of `body` with `body_texture` on every slot, and the
+    /// first model of `head` with the first texture of `head`, placed on the
     /// body's head bone. Returns the model and its textures.
     pub fn load_player(
         &self,
@@ -182,24 +182,21 @@ impl Pes6 {
             local: bone.bind_matrix(),
             bone_id: None,
         });
-        for part in self.extract(head)? {
-            if part.kind != Kind::Model {
-                continue;
-            }
-            let file = PesFile {
-                path: part.path.clone(),
-                ..head.clone()
-            };
-            let parsed =
-                pes_model::parse(&part.data).map_err(|source| Pes6Error::Model { file, source })?;
-            let converted = convert_model("tête", &parsed, face_name.as_deref());
-            model.meshes.extend(
-                converted
-                    .meshes
-                    .into_iter()
-                    .map(|mesh| Mesh { node, ..mesh }),
-            );
-        }
+        // HYPOTHÈSE: a head file holds the same head twice (514 and 114
+        // vertices with the same bounds for 0_text:1943): two levels of
+        // detail, the first being the detailed one.
+        let (found_head, data) = self.first_of(head, Kind::Model)?;
+        let parsed = pes_model::parse(&data).map_err(|source| Pes6Error::Model {
+            file: found_head,
+            source,
+        })?;
+        let converted = convert_model("tête", &parsed, face_name.as_deref());
+        model.meshes.extend(
+            converted
+                .meshes
+                .into_iter()
+                .map(|mesh| Mesh { node, ..mesh }),
+        );
         model.name = format!("{} + {head}", model.name);
         Ok((model, textures))
     }
@@ -346,9 +343,8 @@ fn normalized(v: [f32; 3]) -> [f32; 3] {
 /// Slots of `0_text.afs` (first and last index, both included), from the
 /// map published by the PES 6 modding community ("MAP 0_text.afs PES6",
 /// obipes6.blogspot.com). Indices start at 0.
-// HYPOTHÈSE: drawn up on the full game. Checked on the demo for the faces,
-// hairstyles, kits, numbers and palettes (their contents have the expected
-// signatures, see docs/formats/afs.md). Approximate around the sounds: the
+// Checked on the full PC game: every slot holds the expected kind of
+// content (see docs/formats/afs.md). Approximate around the sounds: the
 // "sons" slots also hold WAV sounds and unknown files, and the ADX sounds
 // go on into the crowd and advertising slots (up to 6920).
 const TEXT_MAP: &[(usize, usize, &str)] = &[
@@ -377,7 +373,7 @@ pub fn section(archive: &str, index: usize) -> Option<&'static str> {
             .find(|(first, last, _)| (*first..=*last).contains(&index))
             .map(|(_, _, name)| *name)
     } else if archive.eq_ignore_ascii_case("0_sound.afs") {
-        // Every file of the demo's 0_sound.afs is an ADX sound.
+        // Every file of 0_sound.afs is an ADX sound.
         Some("sons")
     } else {
         None

@@ -1,8 +1,8 @@
 //! Tests on the real files of the player's PES 6 install.
 //!
 //! Skipped when PES 6 is not configured (e.g. in CI): see
-//! `asset_bridge::testing::game_dir`. Written on the PC demo; they check
-//! properties, not counts, so that they hold on the full game too.
+//! `asset_bridge::testing::game_dir`. Written on the full PC game; they
+//! check properties rather than exact counts.
 
 use asset_bridge::config::Game;
 use asset_bridge::pes6::{self, Pes6};
@@ -66,14 +66,31 @@ fn text_archive_contents_match_the_community_map() {
     };
     let pes = Pes6::open(&dir).unwrap();
     let files = inspect_all(&pes, "0_text.afs");
-    let readable = files
+    // What does not unpack is where the game keeps its encrypted files: one
+    // file of every kit (the big texture), and the block 1193 to 1890 of
+    // the full game. A single other file is let through (n° 7051 of the
+    // full game, an incomplete zlib stream).
+    let unreadable: Vec<usize> = files
         .iter()
-        .filter(|(_, report)| !matches!(report.packing, Packing::Unreadable(_)))
-        .count();
-    // Nearly everything unpacks (803 of the 820 compressed files of the demo).
+        .filter(|(_, report)| matches!(report.packing, Packing::Unreadable(_)))
+        .map(|(index, _)| *index)
+        .collect();
+    let elsewhere: Vec<usize> = unreadable
+        .iter()
+        .copied()
+        .filter(|&index| {
+            pes6::section("0_text.afs", index) != Some("maillots")
+                && !(1193..=1890).contains(&index)
+        })
+        .collect();
     assert!(
-        readable * 50 >= files.len() * 49,
-        "{readable} / {}",
+        elsewhere.len() <= 1,
+        "illisibles hors des zones chiffrées : {elsewhere:?}"
+    );
+    assert!(
+        unreadable.len() * 5 < files.len(),
+        "{} / {}",
+        unreadable.len(),
         files.len()
     );
 
@@ -183,7 +200,7 @@ fn every_texture_decodes_or_is_reported() {
     // Palettes alone (dimensions of zero, or colour variants that stop
     // before their pixels), textures whose palette is elsewhere and
     // swizzled textures are set aside.
-    // Demo: 1184 decoded, 706 set aside (mostly colour variants).
+    // Full game: 5165 decoded, 3173 set aside (mostly colour variants).
     eprintln!("textures : {decoded} décodées, {set_aside} mises de côté");
     assert!(decoded > set_aside, "{decoded} / {set_aside}");
 }
@@ -224,35 +241,39 @@ fn models_parse_with_consistent_draws() {
             }
         }
     }
-    // Demo: 751 read, 11 with an opcode not understood yet (08, 11).
+    // Full game: 9546 read, 101 with an opcode not understood yet.
     eprintln!("modèles : {read} lus, {unknown_opcodes} avec une instruction inconnue");
     assert!(unknown_opcodes * 50 < read, "{read} / {unknown_opcodes}");
 }
 
 #[test]
-fn referee_loads_textured_at_a_plausible_size() {
+fn player_body_loads_textured_at_a_plausible_size() {
     let Some(dir) = game_dir(Game::Pes6) else {
         return;
     };
     let pes = Pes6::open(&dir).unwrap();
-    let texture = pes.load_texture(&"0_text:432".parse().unwrap()).unwrap();
-    assert_eq!((texture.width, texture.height), (512, 256));
-    let model = pes
-        .load_model(&"0_text:431".parse().unwrap(), Some(&texture.name))
+    // The yellow training bib (128 × 128).
+    let texture = pes
+        .load_texture(&"0_text:296/1/0".parse().unwrap())
         .unwrap();
-    assert!(model.triangle_count() > 1000, "{}", model.triangle_count());
+    assert_eq!((texture.width, texture.height), (128, 128));
+    let model = pes
+        .load_model(&"0_text:1064".parse().unwrap(), Some(&texture.name))
+        .unwrap();
+    assert!(model.triangle_count() > 3000, "{}", model.triangle_count());
     let heights = model
         .meshes
         .iter()
         .flat_map(|m| m.positions.iter().map(|p| p[1]));
     let (low, high) = heights.fold((f32::MAX, f32::MIN), |(lo, hi), y| (lo.min(y), hi.max(y)));
-    // Feet at 0, head at 756 units: 1.80 m (retarget::PES6_UNITS_PER_METRE).
+    // Soles a little below 0, neck at 673.8 units; with a head (up to about
+    // 750), 1.83 m at retarget::PES6_UNITS_PER_METRE.
     assert!(
-        low.abs() < 1.0 && (high - 756.0).abs() < 2.0,
+        (-25.0..0.0).contains(&low) && (high - 673.8).abs() < 2.0,
         "{low} .. {high}"
     );
     // Texture coordinates: within the texture, apart from a few that make
-    // it repeat (v up to 1.5 on the demo's referee).
+    // it repeat.
     let uvs: Vec<[f32; 2]> = model
         .meshes
         .iter()
@@ -299,4 +320,20 @@ fn player_body_gets_its_head_on_the_shoulders() {
         low > 580.0 && high < 800.0 && high > 700.0,
         "{low} .. {high}"
     );
+
+    // The face looks the way the toes point (+Z): the head vertex furthest
+    // along the head bone's +X (the nose) ends up in front.
+    let heads: Vec<_> = model
+        .meshes
+        .iter()
+        .filter(|mesh| mesh.node == head)
+        .collect();
+    assert_eq!(heads.len(), 1, "un seul niveau de détail");
+    let nose = heads[0]
+        .positions
+        .iter()
+        .max_by(|a, b| a[0].total_cmp(&b[0]))
+        .unwrap();
+    let nose_z = m[2] * nose[0] + m[6] * nose[1] + m[10] * nose[2] + m[14];
+    assert!(nose_z > 30.0, "nez en z = {nose_z}");
 }

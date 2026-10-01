@@ -2,7 +2,8 @@
 //! strip of part-local indices, and a small draw program that cuts the
 //! strip into draws, each with its part, bone and texture.
 //!
-//! Layout checked on the 762 models of the PES 6 PC demo (751 read), see
+//! Layout checked on the 9647 models of the full PES 6 PC game (9546
+//! read), see
 //! `docs/formats/pes-model.md`.
 
 use crate::content::MODEL_MAGIC;
@@ -30,7 +31,7 @@ impl VertexFormat {
     /// are counted says whether there is a normal (12 bytes), a colour
     /// (4 bytes) or both.
     // HYPOTHÈSE: bit 0x20 of the flags (stadium parts) has no effect on the
-    // layout; the 10 formats of the demo all follow this rule.
+    // layout; the 12 formats of the game all follow this rule.
     pub fn new(stride: u8, flags: u8) -> Option<Self> {
         let bones = flags & 0x0f;
         let bone_bytes = match bones {
@@ -102,8 +103,8 @@ pub struct PesModel {
 ///
 /// The record gives the transform from model space to the bone's space:
 /// a point `p` of the model is at `rotation · p + translation` for the
-/// bone. The joint is at `-rotationᵀ · translation` (the referee's head:
-/// (0, 670.6, 0.7)).
+/// bone. The joint is at `-rotationᵀ · translation` (the head of a
+/// player's body: (0, 670.6, -0.7)).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Bone {
     /// Euler angles, radians, around X, Y and Z.
@@ -115,12 +116,13 @@ pub struct Bone {
 
 impl Bone {
     /// The rotation part of the record, as a row-major 3 × 3 matrix:
-    /// `Ry · Rz · Rx`.
-    // HYPOTHÈSE: of the twelve possible orders, four put the joints of the
-    // arms and the head where the mesh has them, and attach a head the
-    // right way; this one is kept. The joints of the legs and the spine do
-    // not fall in place yet with any order: to be resolved in J6, with the
-    // animations.
+    /// `Rz · Ry · Rx` (X first).
+    // HYPOTHÈSE: of the twelve possible orders, several put the joints of
+    // the arms and the head where the mesh has them, but only half of them
+    // turn an attached head the way the body faces (nose towards +Z, like
+    // the toes); Ry · Rz · Rx, tried first, turned it backwards. The joints
+    // of the legs and the spine do not fall in place yet with any order:
+    // to be resolved in J6, with the animations.
     pub fn rotation(&self) -> [[f32; 3]; 3] {
         let [x, y, z] = self.angles;
         let rx = [
@@ -138,7 +140,7 @@ impl Bone {
             [z.sin(), z.cos(), 0.0],
             [0.0, 0.0, 1.0],
         ];
-        multiply(&multiply(&ry, &rz), &rx)
+        multiply(&multiply(&rz, &ry), &rx)
     }
 
     /// Where the joint is in the model, in the bind pose.
@@ -246,8 +248,8 @@ pub fn parse(bytes: &[u8]) -> Result<PesModel, ModelError> {
 
 /// The skeleton, right after the draw program: a count (u32), then per bone
 /// three Euler angles and a translation (6 × f32), then the parents (i16
-/// per bone, -1 for the root). Checked on the 762 models of the demo:
-/// 700 have no bone, the 26 bodies of players and referees have 19.
+/// per bone, -1 for the root). Checked on the models of the full game: most
+/// have no bone; the 594 bodies of players and referees have 19.
 fn parse_bones(file: &Bytes, at: usize) -> Result<Vec<Bone>, ModelError> {
     let count = file.u32(at, "squelette")?;
     let parents_at = at + 4 + 24 * count;
@@ -573,7 +575,7 @@ mod tests {
     #[test]
     fn bone_records_give_their_joint() {
         use std::f32::consts::FRAC_PI_2;
-        // The head of the referee: model space to bone space.
+        // The head bone of a player's body: model space to bone space.
         let head = Bone {
             angles: [0.0, -FRAC_PI_2, -std::f32::consts::PI],
             translation: [0.713, 670.576, -0.002],
@@ -582,12 +584,15 @@ mod tests {
         let joint = head.joint();
         assert!((joint[1] - 670.576).abs() < 0.01, "{joint:?}");
         assert!(
-            joint[0].abs() < 0.01 && (joint[2] - 0.713).abs() < 0.01,
+            joint[0].abs() < 0.01 && (joint[2] + 0.713).abs() < 0.01,
             "{joint:?}"
         );
-        // The bind matrix takes the bone's origin to the joint.
+        // The bind matrix takes the bone's origin to the joint, and the
+        // bone's +X (where the nose of a head points) to the model's +Z,
+        // the way the body faces.
         let m = head.bind_matrix();
         assert_eq!([m[12], m[13], m[14]], joint);
+        assert!((m[2] - 1.0).abs() < 1e-5, "{m:?}");
     }
 
     #[test]
