@@ -121,8 +121,12 @@ enum AfsCommand {
         archive: String,
 
         /// Numéros des fichiers (par exemple 1943 5452).
-        #[arg(required = true)]
+        #[arg(required_unless_present = "all")]
         indices: Vec<usize>,
+
+        /// Extrait tous les fichiers de l'archive.
+        #[arg(long, conflicts_with = "indices")]
+        all: bool,
 
         /// Dossier de destination (par défaut : dossier de cache de Chaos FC).
         #[arg(long)]
@@ -174,8 +178,9 @@ fn main() -> ExitCode {
         Command::Afs(AfsCommand::Extract {
             archive,
             indices,
+            all,
             out,
-        }) => afs_extract(&config_file, &archive, &indices, out.as_deref()),
+        }) => afs_extract(&config_file, &archive, &indices, all, out.as_deref()),
         Command::Dump {
             source,
             raw,
@@ -502,6 +507,7 @@ fn afs_extract(
     config_file: &Path,
     archive_name: &str,
     indices: &[usize],
+    all: bool,
     out: Option<&Path>,
 ) -> Result<ExitCode> {
     let pes = open_pes6(config_file)?;
@@ -518,7 +524,18 @@ fn afs_extract(
             .join(&stem),
     };
     std::fs::create_dir_all(&out).with_context(|| format!("création de {}", out.display()))?;
-    for &index in indices {
+    let indices: Vec<usize> = if all {
+        archive
+            .entries()
+            .iter()
+            .filter(|entry| !entry.is_empty())
+            .map(|entry| entry.index)
+            .collect()
+    } else {
+        indices.to_vec()
+    };
+    let mut written = 0;
+    for index in indices {
         let entry = *archive
             .entries()
             .get(index)
@@ -535,8 +552,12 @@ fn afs_extract(
             let path = out.join(format!("{name}.{}", file.kind.extension()));
             std::fs::write(&path, &file.data)
                 .with_context(|| format!("écriture de {}", path.display()))?;
-            println!("{} ({})", path.display(), file.kind.label());
+            if !all {
+                println!("{} ({})", path.display(), file.kind.label());
+            }
+            written += 1;
         }
     }
+    println!("{written} fichier(s) écrit(s) dans {}", out.display());
     Ok(ExitCode::SUCCESS)
 }
