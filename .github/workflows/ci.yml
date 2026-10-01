@@ -27,7 +27,7 @@ jobs:
       - uses: actions/checkout@v7
       - name: Rechercher les extensions interdites
         run: |
-          forbidden=$(git ls-files | grep -iE '\.(img|dir|dff|txd|ifp|col|sfx|sdt|raw|adf|afs|bin|str|dump)$' || true)
+          forbidden=$(git ls-files | grep -iE '\.(img|dir|dff|txd|ifp|col|sfx|sdt|raw|adf|afs|bin|str|adx|mdl|tex|dump)$' || true)
           if [ -n "$forbidden" ]; then
             echo "::error::Fichiers de jeu interdits dans le dépôt (voir docs/BRIEF.md, contraintes légales) :"
             echo "$forbidden"

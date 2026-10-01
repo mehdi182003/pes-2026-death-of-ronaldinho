@@ -7,5 +7,6 @@
 pub mod cache;
 pub mod config;
 pub mod model;
+pub mod pes6;
 pub mod testing;
 pub mod vice_city;

@@ -315,6 +315,7 @@ dependencies = [
 name = "asset-bridge"
 version = "0.1.0"
 dependencies = [
+ "formats-pes",
  "formats-rw",
  "serde",
  "tempfile",
@@ -331,6 +332,7 @@ dependencies = [
  "bevy",
  "bevy-bridge",
  "clap",
+ "formats-pes",
  "formats-rw",
  "retarget",
 ]
@@ -2743,6 +2745,11 @@ checksum = "aa9a19cbb55df58761df49b23516a86d432839add4af60fc256da840f66ed35b"
 [[package]]
 name = "formats-pes"
 version = "0.1.0"
+dependencies = [
+ "flate2",
+ "tempfile",
+ "thiserror 2.0.21",
+]
 
 [[package]]
 name = "formats-rw"
