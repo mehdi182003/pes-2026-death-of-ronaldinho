@@ -16,8 +16,9 @@ pub const MODEL_MAGIC: [u8; 4] = [0x20, 0x05, 0x04, 0x20];
 
 /// Signature of the textures: first four bytes `94 72 85 29`.
 // HYPOTHÈSE: these are textures. They fill the kit, number and palette
-// slots of the community map, and their headers give power-of-two sizes
-// (512 × 512...); their layout is read in J5.
+// slots of the community map, and every header of the demo gives a width
+// and a height (u16 at 20 and 22) with their base-2 logarithms rounded up
+// (bytes 26 and 27); their pixels are read in J5.
 pub const TEXTURE_MAGIC: [u8; 4] = [0x94, 0x72, 0x85, 0x29];
 
 /// Copyright marker of CRI's ADX sounds, before the audio data.

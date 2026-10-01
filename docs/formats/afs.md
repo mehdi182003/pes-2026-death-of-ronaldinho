@@ -91,11 +91,24 @@ HYPOTHÈSE modèles et textures, fondée sur la carte communautaire :
 
 - chaque fichier des plages « visages » et « coiffures » est un conteneur de **deux modèles et une texture** (par exemple n° 1943 : 38 192 et 4560 octets pour les modèles, 11 392 pour la texture) ;
 - les plages « maillots », « numéros et polices » et « palettes » ne contiennent que des textures ;
-- les en-têtes de texture contiennent des dimensions en puissances de deux (512 × 512...).
+- **les en-têtes de texture décrivent des images** (test `texture_headers_give_sizes_and_their_logarithms`, sur les 1890 textures de la démo) : largeur et hauteur en u16 aux offsets 20 et 22, puis leurs logarithmes en base 2 arrondis au-dessus aux octets 26 et 27 (256 × 256 : 8 et 8 ; 64 × 48 : 6 et 6). 11 textures ont des dimensions nulles (palettes seules ?). La taille tombe juste pour les plus fréquentes : 66 688 = 128 (en-tête) + 256 × 256 (un octet par pixel) + 1024 (palette de 256 couleurs) ;
+- l'octet 24 vaut 2, 4 ou 8 (sens inconnu, peut-être la profondeur des pixels).
 
 Leur structure interne sera lue au jalon J5 ; c'est l'affichage d'un modèle qui validera ces hypothèses.
 
-Encore inconnus (signature : nombre dans `0_text.afs`) : `07 12 01 20` (923 sous-fichiers), `18 39 84 29` (264), `aPDT` (22 fichiers), `10 00 00 00` (83 fichiers de type 14), quelques petites tables dont le premier entier est un petit nombre, et les fichiers de `e_text.afs` (36 commencent par `01 00 00 00`). Les trois « PNG » (n° 644 à 646) ne font que 6 octets : des fichiers vidés de la démo.
+Encore inconnus, avec les indices relevés (à reprendre aux jalons J5 et J6) :
+
+| Signature | Nombre (`0_text.afs`) | Indices |
+| --- | --- | --- |
+| `07 12 01 20` | 923 sous-fichiers | Par séries de 2 à 54 dans des conteneurs dont le premier sous-fichier est une petite table commençant par leur nombre. Contiennent des demi-flottants valant 1,0 (`00 3c`) et des flottants comme 450,0 ou 600,0. HYPOTHÈSE à tester en J6 : des animations. Signature en forme de date, comme celle des modèles (`20 05 04 20`). |
+| premier octet `1a`, `1b`, `5a`, `5b`, `9a`, `9b`, `db`... | environ 1500 sous-fichiers | Par séries de 2 à 34 dans des conteneurs (n° 74 à 90, 235 à 262, 319 à 378, 457 à 478, 618 à 641). En-tête d'environ 28 octets, puis de longues suites d'entiers de 16 bits qui varient doucement. Structure pas assez régulière pour conclure. |
+| `18 39 84 29` | 264 sous-fichiers | Petites tables de positions (nombre à l'offset 8). La même signature apparaît à l'intérieur des fichiers `9a`. |
+| `19 11 01 20` | 64 sous-fichiers | Encore une signature en forme de date ; non étudiée. |
+| `aPDT` | 22 fichiers | Non compressés, tailles multiples de 2048. |
+| `10 00 00 00` (type 14) | 83 fichiers | Non étudiés. |
+| `e_text.afs` | 88 fichiers | Petites tables commençant par un petit entier ; sans doute des textes ou des réglages. |
+
+Les trois « PNG » (n° 644 à 646) ne font que 6 octets : des fichiers vidés de la démo.
 
 ## Carte de `0_text.afs`
 
@@ -127,10 +140,11 @@ cargo run -p asset-tools -- afs summary                    # toutes les archives
 cargo run -p asset-tools -- afs list 0_text --tree         # fichiers, sous-fichiers, sections
 cargo run -p asset-tools -- afs list 0_text --kind texture # filtre sur le contenu
 cargo run -p asset-tools -- afs extract 0_text 1943        # %LOCALAPPDATA%\chaos-fc\extracted\pes6\0_text\
+cargo run -p asset-tools -- afs extract 0_text --all       # toute l'archive (7601 fichiers sur la démo)
 ```
 
 L'extraction écrit le fichier décompressé et chacun de ses sous-fichiers (`0_text_01943.bin`, `0_text_01943_0.mdl`, `_1.mdl`, `_2.tex`). Les extensions `.mdl` et `.tex` sont choisies par Chaos FC : le jeu n'a pas de noms. Elles sont bloquées par le `.gitignore` et la CI, comme `.adx`.
 
 ## Fichiers testés
 
-`crates/asset-bridge/tests/pes6_files.rs` (ignoré si PES 6 n'est pas configuré) : toutes les archives du dossier `dat` s'ouvrent, `0_sound.afs` ne contient que des sons ADX, au moins 98 % des fichiers de `0_text.afs` se décompressent, et le contenu des sections vérifiées correspond à la carte.
+`crates/asset-bridge/tests/pes6_files.rs` (ignoré si PES 6 n'est pas configuré) : toutes les archives du dossier `dat` s'ouvrent, `0_sound.afs` ne contient que des sons ADX, au moins 98 % des fichiers de `0_text.afs` se décompressent, le contenu des sections vérifiées correspond à la carte, et chaque en-tête de texture donne des dimensions cohérentes avec leurs logarithmes.

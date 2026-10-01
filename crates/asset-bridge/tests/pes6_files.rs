@@ -102,3 +102,45 @@ fn text_archive_contents_match_the_community_map() {
     }
     assert!(kinds_in("sons").contains(&Kind::Adx));
 }
+
+#[test]
+fn texture_headers_give_sizes_and_their_logarithms() {
+    let Some(dir) = game_dir(Game::Pes6) else {
+        return;
+    };
+    let pes = Pes6::open(&dir).unwrap();
+    let mut afs = pes.open_archive("0_text.afs").unwrap();
+    let entries: Vec<_> = afs
+        .entries()
+        .iter()
+        .filter(|e| !e.is_empty())
+        .copied()
+        .collect();
+    let mut checked = 0;
+    for entry in &entries {
+        for file in content::extract(&afs.read(entry).unwrap()) {
+            if file.kind != Kind::Texture {
+                continue;
+            }
+            // Width and height (u16 at 20 and 22), then their base-2
+            // logarithms rounded up (bytes 26 and 27): 64 × 48 gives 6 and
+            // 6. Both zero for a palette alone.
+            let data = &file.data;
+            let fits = |size: u16, log: u8| {
+                let storage = 1u32 << log;
+                u32::from(size) <= storage && 2 * u32::from(size) > storage
+            };
+            let width = u16::from_le_bytes([data[20], data[21]]);
+            let height = u16::from_le_bytes([data[22], data[23]]);
+            let palette_only = width == 0 && height == 0;
+            assert!(
+                palette_only || (fits(width, data[26]) && fits(height, data[27])),
+                "n° {} {:?} : {width} × {height}",
+                entry.index,
+                file.path
+            );
+            checked += 1;
+        }
+    }
+    assert!(checked > 0);
+}
