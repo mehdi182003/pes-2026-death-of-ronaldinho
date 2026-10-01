@@ -1,28 +1,45 @@
-//! Asset viewer: shows a Vice City model in its bind pose (T-pose for a
-//! character), without textures for now (they arrive in J2).
+//! Asset viewer: shows a textured Vice City model in its bind pose (T-pose
+//! for a character), or the textures of a TXD laid flat.
 //!
 //! ```sh
 //! cargo run -p asset-tools --bin viewer -- player
+//! cargo run -p asset-tools --bin viewer -- --textures D:\ViceCity\txd\LOADSC0.TXD
 //! ```
 
+use std::collections::HashMap;
 use std::f32::consts::FRAC_PI_2;
 use std::path::PathBuf;
 
 use anyhow::Result;
 use asset_bridge::config::{self, Game};
-use asset_bridge::model::Model;
-use asset_bridge::vice_city::ViceCity;
+use asset_bridge::model::{self as neutral, Model, Texture};
+use asset_bridge::vice_city::{self, ViceCity, ViceCityError};
+use asset_tools::source::Source;
 use bevy::asset::RenderAssetUsages;
+use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
+use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use clap::Parser;
 
 #[derive(Parser)]
-#[command(name = "viewer", about = "Visualiseur de modèles de GTA Vice City")]
+#[command(
+    name = "viewer",
+    about = "Visualiseur de modèles et de textures de GTA Vice City"
+)]
 struct Args {
     /// Modèle de models/gta3.img, par exemple player ou colt45.
-    model: String,
+    #[arg(required_unless_present = "textures")]
+    model: Option<String>,
+
+    /// Dictionnaire de textures du modèle (par défaut : celui du même nom).
+    #[arg(long)]
+    txd: Option<String>,
+
+    /// Affiche à plat les textures d'un TXD : vc:<nom> ou chemin d'un fichier.
+    #[arg(long, conflicts_with = "model")]
+    textures: Option<Source>,
 
     /// Fichier de configuration (par défaut : $CHAOS_FC_CONFIG, sinon ./config.toml).
     #[arg(long)]
@@ -31,14 +48,13 @@ struct Args {
 
 fn main() -> AppExit {
     let args = Args::parse();
-    let model = match load_model(&args) {
-        Ok(model) => model,
+    let scene = match load(&args) {
+        Ok(scene) => scene,
         Err(err) => {
             eprintln!("Erreur : {err:#}");
             return AppExit::error();
         }
     };
-    let scene = ViewerScene::new(model);
 
     App::new()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
@@ -68,16 +84,85 @@ fn main() -> AppExit {
         .run()
 }
 
-fn load_model(args: &Args) -> Result<Model> {
+fn load(args: &Args) -> Result<ViewerScene> {
     let config_file = args.config.clone().unwrap_or_else(config::config_path);
+    if let Some(source) = &args.textures {
+        let textures = vice_city::decode_txd(&source.label(), &source.read(&config_file)?)?;
+        let board = texture_board(&source.label(), &textures);
+        return Ok(ViewerScene::new(board, textures, true, None));
+    }
+
+    let name = args.model.as_deref().expect("clap requires a model");
     let vice_city = config::read_paths(&config_file)?.check(Game::ViceCity)?;
-    Ok(ViceCity::open(&vice_city)?.load_model(&args.model)?)
+    let mut game = ViceCity::open(&vice_city)?;
+    let model = game.load_model(name)?;
+    let txd = args
+        .txd
+        .as_deref()
+        .unwrap_or_else(|| name.trim_end_matches(".dff").trim_end_matches(".DFF"));
+    let (textures, note) = match game.load_textures(txd) {
+        Ok(textures) => (textures, None),
+        // A model without a dictionary of the same name stays untextured.
+        Err(ViceCityError::NotFound(file)) => (Vec::new(), Some(format!("{file} introuvable"))),
+        Err(err) => return Err(err.into()),
+    };
+    Ok(ViewerScene::new(model, textures, false, note))
+}
+
+/// Lays textures side by side on upright quads one metre high, so that they
+/// can be checked by eye.
+fn texture_board(name: &str, textures: &[Texture]) -> Model {
+    let mut x = 0.0;
+    let meshes = textures
+        .iter()
+        .map(|texture| {
+            let width = texture.width as f32 / texture.height as f32;
+            let mesh = neutral::Mesh {
+                node: 0,
+                positions: vec![
+                    [x, 0.0, 0.0],
+                    [x + width, 0.0, 0.0],
+                    [x + width, 1.0, 0.0],
+                    [x, 1.0, 0.0],
+                ],
+                normals: Some(vec![[0.0, 0.0, 1.0]; 4]),
+                // The top-left corner of the image goes to the top-left
+                // corner of the quad.
+                uvs: Some(vec![[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]]),
+                colors: None,
+                primitives: vec![neutral::Primitive {
+                    material: neutral::Material {
+                        base_color: [1.0; 4],
+                        texture: Some(texture.name.clone()),
+                    },
+                    indices: vec![0, 1, 2, 0, 2, 3],
+                }],
+            };
+            x += width + 0.1;
+            mesh
+        })
+        .collect();
+    Model {
+        name: name.to_owned(),
+        nodes: vec![neutral::Node {
+            name: "board".into(),
+            parent: None,
+            local: Mat4::IDENTITY.to_cols_array(),
+        }],
+        meshes,
+        skeleton: None,
+    }
 }
 
 /// The model and what the viewer derives from it once.
 #[derive(Resource)]
 struct ViewerScene {
     model: Model,
+    textures: Vec<Texture>,
+    /// Texture board: no lighting, both faces visible.
+    flat: bool,
+    /// Shown in the help, e.g. a missing texture dictionary.
+    note: Option<String>,
     /// World matrix of each node of the model.
     node_world: Vec<Mat4>,
     /// Bind-pose position of each bone, and its parent bone.
@@ -88,7 +173,7 @@ struct ViewerScene {
 }
 
 impl ViewerScene {
-    fn new(model: Model) -> Self {
+    fn new(model: Model, textures: Vec<Texture>, flat: bool, note: Option<String>) -> Self {
         let mut node_world: Vec<Mat4> = Vec::with_capacity(model.nodes.len());
         for node in &model.nodes {
             let local = Mat4::from_cols_array(&node.local);
@@ -137,6 +222,9 @@ impl ViewerScene {
 
         Self {
             model,
+            textures,
+            flat,
+            note,
             node_world,
             bones,
             min,
@@ -218,7 +306,18 @@ fn setup(
     options: Res<Options>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut images: ResMut<Assets<Image>>,
 ) {
+    // Materials name their texture; the game ignores case.
+    let textures: HashMap<String, (Handle<Image>, bool)> = scene
+        .textures
+        .iter()
+        .map(|texture| {
+            let handle = images.add(texture_image(texture));
+            (texture.name.to_lowercase(), (handle, texture.is_opaque()))
+        })
+        .collect();
+
     let root_transform = options.root_transform();
     let root = commands
         .spawn((ModelRoot, root_transform, Visibility::default()))
@@ -251,9 +350,25 @@ fn setup(
             }
 
             let [r, g, b, a] = primitive.material.base_color;
+            let texture = primitive
+                .material
+                .texture
+                .as_ref()
+                .and_then(|name| textures.get(&name.to_lowercase()));
             let material = StandardMaterial {
                 base_color: Color::srgba(r, g, b, a),
+                base_color_texture: texture.map(|(handle, _)| handle.clone()),
+                alpha_mode: match texture {
+                    Some((_, false)) => AlphaMode::Mask(0.5),
+                    _ => AlphaMode::Opaque,
+                },
                 perceptual_roughness: 0.8,
+                unlit: scene.flat,
+                cull_mode: if scene.flat {
+                    None
+                } else {
+                    StandardMaterial::default().cull_mode
+                },
                 ..default()
             };
             commands.spawn((
@@ -286,6 +401,31 @@ fn setup(
             ..default()
         },
     ));
+}
+
+/// Bevy image of a decoded texture.
+fn texture_image(texture: &Texture) -> Image {
+    let mut image = Image::new(
+        Extent3d {
+            width: texture.width,
+            height: texture.height,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        texture.rgba8.clone(),
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::default(),
+    );
+    // HYPOTHÈSE: Vice City textures repeat (sampler 0x1106 of the DFF and
+    // TXD files, read as wrap/wrap after the GTAMods wiki).
+    image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
+        address_mode_u: ImageAddressMode::Repeat,
+        address_mode_v: ImageAddressMode::Repeat,
+        mag_filter: ImageFilterMode::Linear,
+        min_filter: ImageFilterMode::Linear,
+        ..default()
+    });
+    image
 }
 
 fn handle_keys(
@@ -394,8 +534,20 @@ fn update_help(
     let on_off = |on: bool| if on { "oui" } else { "non" };
     let size = scene.max - scene.min;
     let model = &scene.model;
+    let textures: Vec<String> = scene
+        .textures
+        .iter()
+        .map(|t| format!("{} ({}x{})", t.name, t.width, t.height))
+        .collect();
+    let texture_line = match (&scene.note, textures.len()) {
+        (Some(note), _) => format!("Textures : aucune ({note})"),
+        (None, 0) => "Textures : aucune".to_owned(),
+        (None, count) if count <= 6 => format!("Textures : {}", textures.join(", ")),
+        (None, count) => format!("Textures : {count}, dont {}", textures[..6].join(", ")),
+    };
     let help = format!(
         "{name} : {vertices} sommets, {triangles} triangles, {bones} os\n\
+         {texture_line}\n\
          Taille dans le fichier : X {x:.2} m, Y {y:.2} m, Z {z:.2} m\n\
          Souris : clic gauche + glisser pour tourner, molette pour zoomer\n\
          [S] squelette : {skeleton}   [V] maillage : {mesh}   [G] grille : {grid}\n\
