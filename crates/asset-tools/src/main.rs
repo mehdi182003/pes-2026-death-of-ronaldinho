@@ -6,10 +6,12 @@ use std::process::ExitCode;
 use anyhow::{Context, Result};
 use asset_bridge::cache;
 use asset_bridge::config::{self, Game};
+use asset_bridge::pes6::{self, Pes6};
 use asset_bridge::vice_city;
 use asset_tools::dump;
 use asset_tools::source::{self, Source};
 use clap::{Parser, Subcommand};
+use formats_pes::content::{self, Packing, Report};
 use formats_rw::sfx::{self, SoundBank};
 
 #[derive(Parser)]
@@ -39,6 +41,10 @@ enum Command {
     /// Banque de sons audio/sfx.SDT et sfx.RAW de Vice City.
     #[command(subcommand)]
     Sfx(SfxCommand),
+
+    /// Archives AFS du dossier dat de PES 6.
+    #[command(subcommand)]
+    Afs(AfsCommand),
 
     /// Dump hexadécimal annoté : arbre des chunks pour un fichier RenderWare (DFF, TXD).
     Dump {
@@ -85,6 +91,46 @@ enum SfxCommand {
 }
 
 #[derive(Subcommand)]
+enum AfsCommand {
+    /// Résumé de toutes les archives : nombre de fichiers par contenu.
+    Summary,
+
+    /// Liste les fichiers d'une archive : numéro, taille, stockage, contenu,
+    /// et section de la carte communautaire.
+    List {
+        /// Archive du dossier dat (par exemple 0_text ou 0_text.afs).
+        archive: String,
+
+        /// Affiche aussi les emplacements vides.
+        #[arg(long)]
+        empty: bool,
+
+        /// Détaille les sous-fichiers des conteneurs.
+        #[arg(long)]
+        tree: bool,
+
+        /// N'affiche que les fichiers dont le contenu contient ce texte (par exemple texture).
+        #[arg(long)]
+        kind: Option<String>,
+    },
+
+    /// Extrait des fichiers décompressés, et leurs sous-fichiers, par défaut
+    /// dans le dossier de cache.
+    Extract {
+        /// Archive du dossier dat (par exemple 0_text).
+        archive: String,
+
+        /// Numéros des fichiers (par exemple 1943 5452).
+        #[arg(required = true)]
+        indices: Vec<usize>,
+
+        /// Dossier de destination (par défaut : dossier de cache de Chaos FC).
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand)]
 enum ImgCommand {
     /// Liste les fichiers de l'archive.
     List {
@@ -118,6 +164,18 @@ fn main() -> ExitCode {
         Command::Sfx(SfxCommand::Export { indices, out }) => {
             sfx_export(&config_file, &indices, out.as_deref())
         }
+        Command::Afs(AfsCommand::Summary) => afs_summary(&config_file),
+        Command::Afs(AfsCommand::List {
+            archive,
+            empty,
+            tree,
+            kind,
+        }) => afs_list(&config_file, &archive, empty, tree, kind.as_deref()),
+        Command::Afs(AfsCommand::Extract {
+            archive,
+            indices,
+            out,
+        }) => afs_extract(&config_file, &archive, &indices, out.as_deref()),
         Command::Dump {
             source,
             raw,
@@ -269,6 +327,216 @@ fn sfx_export(config_file: &Path, indices: &[usize], out: Option<&Path>) -> Resu
         std::fs::write(&path, sfx::wav_bytes(sample_rate, &samples))
             .with_context(|| format!("écriture de {}", path.display()))?;
         println!("{}", path.display());
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn open_pes6(config_file: &Path) -> Result<Pes6> {
+    let pes6 = config::read_paths(config_file)?.check(Game::Pes6)?;
+    Ok(Pes6::open(&pes6)?)
+}
+
+fn packing_label(packing: &Packing) -> &'static str {
+    match packing {
+        Packing::Plain => "brut",
+        Packing::Stored => "stocké",
+        Packing::Compressed => "zlib",
+        Packing::Unreadable(_) => "illisible",
+    }
+}
+
+/// What a report shows in a list: its kind, plus the kinds of the
+/// sub-files of a container (e.g. « conteneur : 2 × modèle, 1 × texture »).
+fn content_label(report: &Report) -> String {
+    if let Packing::Unreadable(reason) = &report.packing {
+        return format!("illisible ({reason})");
+    }
+    if report.children.is_empty() {
+        return report.kind.label();
+    }
+    let mut counts: Vec<(String, usize)> = Vec::new();
+    for child in &report.children {
+        let label = content_label(child);
+        match counts.iter_mut().find(|(known, _)| *known == label) {
+            Some((_, count)) => *count += 1,
+            None => counts.push((label, 1)),
+        }
+    }
+    let parts: Vec<String> = counts
+        .iter()
+        .map(|(label, count)| format!("{count} × {label}"))
+        .collect();
+    format!("{} : {}", report.kind.label(), parts.join(", "))
+}
+
+fn print_tree(report: &Report, depth: usize) {
+    for (position, child) in report.children.iter().enumerate() {
+        println!(
+            "{:>width$}.{position:<3} {:>9} {:<9} {}",
+            "",
+            child.size,
+            packing_label(&child.packing),
+            content_label(child),
+            width = 6 + 4 * depth,
+        );
+        print_tree(child, depth + 1);
+    }
+}
+
+fn afs_list(
+    config_file: &Path,
+    archive_name: &str,
+    show_empty: bool,
+    tree: bool,
+    kind: Option<&str>,
+) -> Result<ExitCode> {
+    let pes = open_pes6(config_file)?;
+    let mut archive = pes.open_archive(archive_name)?;
+    let file_name = archive
+        .path()
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let kind = kind.map(str::to_lowercase);
+    let entries = archive.entries().to_vec();
+    let mut shown = 0;
+    println!(
+        "{:>6} {:>9} {:<9} contenu [section de la carte]",
+        "numéro", "octets", "stockage"
+    );
+    for entry in &entries {
+        if entry.is_empty() {
+            if show_empty && kind.is_none() {
+                println!("{:>6} {:>9} {:<9} -", entry.index, 0, "vide");
+                shown += 1;
+            }
+            continue;
+        }
+        let report = content::inspect(&archive.read(entry)?);
+        let label = content_label(&report);
+        if kind
+            .as_ref()
+            .is_some_and(|kind| !label.to_lowercase().contains(kind))
+        {
+            continue;
+        }
+        let section = pes6::section(&file_name, entry.index)
+            .map(|name| format!(" [{name}]"))
+            .unwrap_or_default();
+        println!(
+            "{:>6} {:>9} {:<9} {label}{section}",
+            entry.index,
+            entry.size,
+            packing_label(&report.packing)
+        );
+        if tree {
+            print_tree(&report, 0);
+        }
+        shown += 1;
+    }
+    let used = entries.iter().filter(|entry| !entry.is_empty()).count();
+    println!(
+        "{shown} fichier(s) affiché(s) ; {used} emplacement(s) utilisé(s) sur {}",
+        entries.len()
+    );
+    Ok(ExitCode::SUCCESS)
+}
+
+fn afs_summary(config_file: &Path) -> Result<ExitCode> {
+    let pes = open_pes6(config_file)?;
+    for name in pes.archive_names()? {
+        let mut archive = pes.open_archive(&name)?;
+        let entries = archive.entries().to_vec();
+        let mut used = 0;
+        let mut unreadable = 0;
+        let mut top: Vec<(String, usize)> = Vec::new();
+        let mut leaves: Vec<(String, usize)> = Vec::new();
+        let count = |counts: &mut Vec<(String, usize)>, label: String| match counts
+            .iter_mut()
+            .find(|(known, _)| *known == label)
+        {
+            Some((_, n)) => *n += 1,
+            None => counts.push((label, 1)),
+        };
+        for entry in entries.iter().filter(|entry| !entry.is_empty()) {
+            used += 1;
+            let report = content::inspect(&archive.read(entry)?);
+            if matches!(report.packing, Packing::Unreadable(_)) {
+                unreadable += 1;
+                count(&mut top, "illisible".into());
+                continue;
+            }
+            count(&mut top, report.kind.label());
+            for sub in report.walk() {
+                if sub.children.is_empty() && !std::ptr::eq(sub, &report) {
+                    let label = match sub.packing {
+                        Packing::Unreadable(_) => "illisible".into(),
+                        _ => sub.kind.label(),
+                    };
+                    count(&mut leaves, label);
+                }
+            }
+        }
+        println!(
+            "{name} : {} emplacements, {used} utilisés, {} vides, {unreadable} illisible(s)",
+            entries.len(),
+            entries.len() - used
+        );
+        top.sort_by_key(|&(_, n)| std::cmp::Reverse(n));
+        leaves.sort_by_key(|&(_, n)| std::cmp::Reverse(n));
+        println!("  fichiers :");
+        for (label, n) in &top {
+            println!("    {n:>6} × {label}");
+        }
+        if !leaves.is_empty() {
+            println!("  sous-fichiers (dans les conteneurs) :");
+            for (label, n) in &leaves {
+                println!("    {n:>6} × {label}");
+            }
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn afs_extract(
+    config_file: &Path,
+    archive_name: &str,
+    indices: &[usize],
+    out: Option<&Path>,
+) -> Result<ExitCode> {
+    let pes = open_pes6(config_file)?;
+    let mut archive = pes.open_archive(archive_name)?;
+    let stem = archive
+        .path()
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let out = match out {
+        Some(dir) => dir.to_path_buf(),
+        None => cache::extraction_dir(Game::Pes6)
+            .context("dossier de cache introuvable : précisez --out")?
+            .join(&stem),
+    };
+    std::fs::create_dir_all(&out).with_context(|| format!("création de {}", out.display()))?;
+    for &index in indices {
+        let entry = *archive
+            .entries()
+            .get(index)
+            .with_context(|| format!("{stem}.afs n'a pas de fichier n° {index}"))?;
+        if entry.is_empty() {
+            println!("n° {index} : emplacement vide");
+            continue;
+        }
+        for file in content::extract(&archive.read(&entry)?) {
+            let mut name = format!("{stem}_{index:05}");
+            for position in &file.path {
+                name.push_str(&format!("_{position}"));
+            }
+            let path = out.join(format!("{name}.{}", file.kind.extension()));
+            std::fs::write(&path, &file.data)
+                .with_context(|| format!("écriture de {}", path.display()))?;
+            println!("{} ({})", path.display(), file.kind.label());
+        }
     }
     Ok(ExitCode::SUCCESS)
 }

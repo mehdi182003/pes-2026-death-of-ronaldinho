@@ -65,6 +65,18 @@ impl Kind {
             }
         }
     }
+
+    /// File extension for extracted files. `mdl` and `tex` are ours: the
+    /// game has no file names.
+    pub fn extension(&self) -> &'static str {
+        match self {
+            Kind::Model => "mdl",
+            Kind::Texture => "tex",
+            Kind::Adx => "adx",
+            Kind::Wav => "wav",
+            _ => "bin",
+        }
+    }
 }
 
 /// How a file is stored.
@@ -108,36 +120,91 @@ pub fn inspect(bytes: &[u8]) -> Report {
 }
 
 fn inspect_at(bytes: &[u8], depth: usize) -> Report {
-    let (packing, content) = match PackedHeader::parse(bytes) {
-        None => (Packing::Plain, bytes.to_vec()),
-        Some(header) => match packed::unpack(&header, bytes) {
-            Ok(data) if header.compressed => (Packing::Compressed, data),
-            Ok(data) => (Packing::Stored, data),
-            Err(err) => {
-                return Report {
-                    packing: Packing::Unreadable(err.to_string()),
-                    kind: Kind::Unknown(Vec::new()),
-                    size: header.stored_size as usize,
-                    children: Vec::new(),
-                };
-            }
-        },
+    let (packing, content) = unpack_any(bytes);
+    let Some(content) = content else {
+        return Report {
+            packing,
+            kind: Kind::Unknown(Vec::new()),
+            size: bytes.len().saturating_sub(packed::HEADER_SIZE),
+            children: Vec::new(),
+        };
     };
     let kind = identify(&content);
-    let children = match (&kind, depth < MAX_DEPTH) {
-        (Kind::Container, true) => parse_container(&content)
-            .unwrap_or_default()
-            .into_iter()
-            .map(|range| inspect_at(&content[range], depth + 1))
-            .collect(),
-        _ => Vec::new(),
-    };
+    let children = sub_files(&kind, &content, depth)
+        .map(|sub| inspect_at(sub, depth + 1))
+        .collect();
     Report {
         packing,
         kind,
         size: content.len(),
         children,
     }
+}
+
+/// A file or sub-file, unpacked, as written by the extraction tool.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Extracted {
+    /// Position among the sub-files at each level: empty for the file
+    /// itself, `[1]` for its second sub-file, `[1, 0]` for the first
+    /// sub-file of that one.
+    pub path: Vec<usize>,
+    pub kind: Kind,
+    /// Unpacked content; the stored bytes, header included, if unreadable.
+    pub data: Vec<u8>,
+}
+
+/// Unpacks `bytes` and every sub-file inside, depth first: the file itself
+/// comes first.
+pub fn extract(bytes: &[u8]) -> Vec<Extracted> {
+    let mut all = Vec::new();
+    extract_at(bytes, Vec::new(), &mut all);
+    all
+}
+
+fn extract_at(bytes: &[u8], path: Vec<usize>, all: &mut Vec<Extracted>) {
+    let depth = path.len();
+    let Some(content) = unpack_any(bytes).1 else {
+        all.push(Extracted {
+            path,
+            kind: Kind::Unknown(Vec::new()),
+            data: bytes.to_vec(),
+        });
+        return;
+    };
+    let kind = identify(&content);
+    let subs: Vec<&[u8]> = sub_files(&kind, &content, depth).collect();
+    all.push(Extracted {
+        path: path.clone(),
+        kind,
+        data: content.clone(),
+    });
+    for (position, sub) in subs.into_iter().enumerate() {
+        let mut sub_path = path.clone();
+        sub_path.push(position);
+        extract_at(sub, sub_path, all);
+    }
+}
+
+/// How `bytes` is stored, and its content once unpacked (`None` if the data
+/// cannot be inflated).
+fn unpack_any(bytes: &[u8]) -> (Packing, Option<Vec<u8>>) {
+    match PackedHeader::parse(bytes) {
+        None => (Packing::Plain, Some(bytes.to_vec())),
+        Some(header) => match packed::unpack(&header, bytes) {
+            Ok(data) if header.compressed => (Packing::Compressed, Some(data)),
+            Ok(data) => (Packing::Stored, Some(data)),
+            Err(err) => (Packing::Unreadable(err.to_string()), None),
+        },
+    }
+}
+
+/// The sub-files of a container, unless the nesting limit is reached.
+fn sub_files<'a>(kind: &Kind, content: &'a [u8], depth: usize) -> impl Iterator<Item = &'a [u8]> {
+    let ranges = match kind {
+        Kind::Container if depth < MAX_DEPTH => parse_container(content).unwrap_or_default(),
+        _ => Vec::new(),
+    };
+    ranges.into_iter().map(move |range| &content[range])
 }
 
 /// Recognises unpacked content by its first bytes.
@@ -297,6 +364,13 @@ mod tests {
         assert_eq!(nested.packing, Packing::Compressed);
         assert_eq!(nested.children[0].kind, Kind::Texture);
         assert_eq!(report.walk().len(), 4);
+
+        let extracted = extract(&outer);
+        let paths: Vec<&[usize]> = extracted.iter().map(|file| &file.path[..]).collect();
+        assert_eq!(paths, [&[][..], &[0], &[1], &[1, 0]]);
+        assert_eq!(extracted[1].data, model);
+        assert_eq!(extracted[3].kind.extension(), "tex");
+        assert_eq!(&extracted[3].data[..4], TEXTURE_MAGIC);
     }
 
     #[test]

@@ -31,8 +31,10 @@ impl PackedHeader {
     /// not start with one (ADX sounds, WAV files...).
     ///
     /// Recognised by its shape: bytes 0 and 3 are zero, byte 2 is 0 or 1,
-    /// and the data fills the rest of the file, give or take three bytes
-    /// of padding (one file of the demo has one).
+    /// and the data fills the rest of the file, give or take up to 15 bytes
+    /// of padding: sub-files of containers are aligned on 16 bytes (padding
+    /// of 0 to 15 bytes seen in the demo), files of the archives have at
+    /// most one.
     pub fn parse(bytes: &[u8]) -> Option<Self> {
         let header = bytes.get(..HEADER_SIZE)?;
         let u32_at = |at: usize| u32::from_le_bytes(header[at..at + 4].try_into().unwrap());
@@ -42,7 +44,7 @@ impl PackedHeader {
         let stored_size = u32_at(4);
         let available = bytes.len() - HEADER_SIZE;
         let padding = available.checked_sub(stored_size as usize)?;
-        if padding > 3 {
+        if padding >= 16 {
             return None;
         }
         Some(Self {
@@ -134,6 +136,10 @@ mod tests {
         assert_eq!(PackedHeader::parse(&adx), None);
         // Too short.
         assert_eq!(PackedHeader::parse(&[0; 16]), None);
+        // More padding than the 16-byte alignment explains.
+        let mut file = header(6, true, 4, 200);
+        file.extend([0; 20]);
+        assert_eq!(PackedHeader::parse(&file), None);
         // Stored size larger than the file.
         let mut file = header(6, true, 100, 200);
         file.extend([0; 10]);
