@@ -23,7 +23,7 @@ Aucun fichier issu de GTA Vice City ou de PES ne doit jamais entrer dans le dép
 
 **Mise en œuvre (J0) :**
 
-- Le `.gitignore` bloque `config.toml`, les dossiers de cache locaux et les extensions de fichiers des jeux (`.img`, `.dir`, `.dff`, `.txd`, `.ifp`, `.col`, `.sfx`, `.sdt`, `.raw`, `.adf`, `.afs`, `.bin`, `.str`, `.dump`). Un job de CI échoue si un fichier portant l'une de ces extensions est suivi par Git.
+- Le `.gitignore` bloque `config.toml`, les dossiers de cache locaux et les extensions de fichiers des jeux (`.img`, `.dir`, `.dff`, `.txd`, `.ifp`, `.col`, `.sfx`, `.sdt`, `.raw`, `.adf`, `.afs`, `.bin`, `.str`, `.dump`, et depuis J4 `.adx`, `.mdl`, `.tex`). Un job de CI échoue si un fichier portant l'une de ces extensions est suivi par Git.
 - `config.toml` est cherché dans le dossier courant, ou à l'emplacement donné par la variable d'environnement `CHAOS_FC_CONFIG`. Section `[paths]`, clés `vice_city` et `pes6`. Un chemin relatif part du dossier du fichier de configuration. Modèle : `config.example.toml`.
 - Un dossier n'est accepté que s'il ressemble à l'installation attendue. Vice City : `models/gta3.img` et `models/gta3.dir` présents. PES 6 : au moins une archive `.afs` dans un sous-dossier `dat` (HYPOTHÈSE à confirmer sur la copie de Mokhmad). Toutes les erreurs sont listées d'un coup, avec la clé fautive.
 - `cargo run -p asset-tools -- check-config` vérifie les chemins sans compiler Bevy.
@@ -164,10 +164,18 @@ Références : le wiki GTAMods (pages RenderWare, DFF, TXD, IFP, IMG), librw et 
 
 | Élément | État des connaissances | Notes |
 | --- | --- | --- |
-| Archives AFS | Format simple et connu | En-tête `AFS`, nombre de fichiers, table offset/taille. Noms exacts des archives à relever sur la copie installée. |
-| Compression interne | Partiellement connue | Beaucoup de fichiers seraient compressés en zlib derrière un petit en-tête propre au jeu. À confirmer. |
+| Archives AFS | Vérifié (J4) | En-tête `AFS`, nombre de fichiers, table offset/taille. Démo : `0_sound.afs`, `0_text.afs`, `e_text.afs`, sans noms de fichiers. |
+| Compression interne | Vérifiée (J4) | En-tête de 32 octets (type, drapeau zlib, tailles) puis zlib ; beaucoup de fichiers sont des conteneurs de sous-fichiers. |
 | Modèles joueurs, ballon, stade | Outillé par la scène de modding | Corps, visages, cheveux, maillots en textures. S'appuyer sur la documentation des outils de modding PES 6. |
 | Animations | Peu documentées | Principal chantier de reverse engineering du projet. |
+
+**Constats (J4)**, détaillés dans `docs/formats/afs.md`, sur la démo PC (la seule copie disponible) : les archives n'ont pas de noms de fichiers, et la plupart des emplacements de `0_text.afs` sont vides (6035 sur 7152). Les fichiers sont identifiés par leur signature, et situés grâce à la carte communautaire de `0_text.afs`, vérifiée sur la démo. Un visage est un conteneur de deux modèles et d'une texture. 16 fichiers de la plage des maillots ne sont pas du zlib (contenu d'aspect chiffré) et restent illisibles.
+
+**Décisions (J4) :**
+
+- `formats-pes` lit les archives (`afs`), l'en-tête compressé (`packed`, avec flate2) et reconnaît les contenus (`content`) ; `asset-bridge::pes6` ouvre le dossier `dat` et porte la carte de `0_text.afs`. Les fichiers sont désignés par archive et numéro (`0_text` n° 1943), faute de noms.
+- Les signatures `20 05 04 20` (modèles) et `94 72 85 29` (textures) restent des hypothèses jusqu'à l'affichage d'un modèle au jalon J5. Les contenus non reconnus sont listés avec leurs premiers octets, jamais devinés.
+- Les tests sur les fichiers de PES vérifient des propriétés (contenus des sections, taux de fichiers lisibles), pas les nombres exacts de la démo, pour rester valables sur le jeu complet.
 
 **Plan de repli pour les animations PES :** si elles restent illisibles après un effort raisonnable, utiliser des animations libres de droits (par exemple Mixamo) retargetées sur le squelette PES. Le jalon correspondant ne doit pas bloquer tout le projet.
 
@@ -222,7 +230,7 @@ Le cœur du projet est un moteur de foot crédible. Tommy, l'arbitre et les corp
 
 On valide d'abord que les assets des deux jeux sont lisibles (J1 à J5), avant d'écrire la moindre ligne d'IA de foot. Un jalon n'est terminé que lorsque son critère est validé par Mokhmad sur sa machine.
 
-**Installations disponibles chez Mokhmad (1er octobre 2026) :** GTA Vice City (PC) installé ; PES 6 pas encore.
+**Installations disponibles chez Mokhmad (1er octobre 2026) :** GTA Vice City (PC) installé ; PES 6 pas encore. **Chez Mehdi (1er octobre 2026) :** GTA Vice City (PC) et la **démo** PC de PES 6, sur laquelle J4 a été développé.
 
 | Jalon | Livrable | Critère de réussite |
 | --- | --- | --- |

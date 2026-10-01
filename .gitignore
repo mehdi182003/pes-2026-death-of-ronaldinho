@@ -30,6 +30,10 @@
 *.afs
 *.bin
 *.str
+*.adx
+# Extractions de PES 6 par asset-tools (extensions choisies par Chaos FC)
+*.mdl
+*.tex
 # Dumps et extractions bruts
 *.dump
 
