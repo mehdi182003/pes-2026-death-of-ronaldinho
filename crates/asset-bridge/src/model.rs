@@ -37,6 +37,9 @@ pub struct Node {
     pub parent: Option<usize>,
     /// Transform relative to the parent.
     pub local: Mat4,
+    /// Bone ID used by animations (Vice City: HAnim ID), if this node is a
+    /// bone.
+    pub bone_id: Option<i32>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -51,6 +54,17 @@ pub struct Mesh {
     pub colors: Option<Vec<[f32; 4]>>,
     /// One triangle list per material.
     pub primitives: Vec<Primitive>,
+    /// How the vertices follow the bones of [`Model::skeleton`].
+    pub skin: Option<MeshSkin>,
+}
+
+/// Per vertex: up to four bones (indices into [`Skeleton::bones`]) and
+/// their weights, which add up to 1. Unused slots have a zero weight and
+/// index 0.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MeshSkin {
+    pub joints: Vec<[u16; 4]>,
+    pub weights: Vec<[f32; 4]>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -82,4 +96,70 @@ pub struct Bone {
     /// From model space to bone space, in the bind pose. Its inverse places
     /// the bone where the mesh expects it.
     pub inverse_bind: Mat4,
+}
+
+/// A decoded texture: 4 bytes per pixel (R, G, B, A, sRGB), rows from the
+/// top. Materials refer to it by name, ignoring case like the game.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Texture {
+    pub name: String,
+    pub width: u32,
+    pub height: u32,
+    pub rgba8: Vec<u8>,
+}
+
+impl Texture {
+    /// Whether every pixel is fully opaque.
+    pub fn is_opaque(&self) -> bool {
+        self.rgba8
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .all(|pixel| pixel[3] == 255)
+    }
+}
+
+/// A skeletal animation, independent of any model.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Animation {
+    pub name: String,
+    /// Seconds.
+    pub duration: f32,
+    pub tracks: Vec<Track>,
+}
+
+/// Key frames of one bone.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Track {
+    pub bone_name: String,
+    /// When the file gives one; otherwise the bone is found by name.
+    pub bone_id: Option<i32>,
+    pub keys: Vec<Key>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Key {
+    /// Seconds from the start.
+    pub time: f32,
+    /// Rotation relative to the parent bone, quaternion (x, y, z, w).
+    pub rotation: [f32; 4],
+    /// Position relative to the parent bone; when absent, the bone keeps
+    /// the position of its node.
+    pub translation: Option<[f32; 3]>,
+    pub scale: Option<[f32; 3]>,
+}
+
+impl Track {
+    /// Node of `model` driven by this track: by bone ID, else by name
+    /// (ignoring case).
+    pub fn node_in(&self, model: &Model) -> Option<usize> {
+        self.bone_id
+            .and_then(|id| model.nodes.iter().position(|node| node.bone_id == Some(id)))
+            .or_else(|| {
+                model
+                    .nodes
+                    .iter()
+                    .position(|node| node.name.eq_ignore_ascii_case(&self.bone_name))
+            })
+    }
 }

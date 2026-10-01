@@ -1,12 +1,18 @@
 //! Vice City assets, read from the player's install.
 
-use std::path::Path;
+use std::io;
+use std::path::{Path, PathBuf};
 
 use formats_rw::dff::{self, Clump};
+use formats_rw::ifp::{self, IfpError};
 use formats_rw::img::{ImgArchive, ImgError};
 use formats_rw::rw::RwError;
+use formats_rw::txd;
 
-use crate::model::{Bone, Material, Mesh, Model, Node, Primitive, Skeleton};
+use crate::model::{
+    Animation, Bone, Key, Material, Mesh, MeshSkin, Model, Node, Primitive, Skeleton, Texture,
+    Track,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ViceCityError {
@@ -25,10 +31,25 @@ pub enum ViceCityError {
 
     #[error("{name} : {message}")]
     Unsupported { name: String, message: String },
+
+    #[error("{name} : {source}")]
+    Animation {
+        name: String,
+        #[source]
+        source: IfpError,
+    },
+
+    #[error("impossible de lire {} : {source}", .path.display())]
+    Io {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
 }
 
 /// The player's Vice City install.
 pub struct ViceCity {
+    root: PathBuf,
     archive: ImgArchive,
 }
 
@@ -36,16 +57,60 @@ impl ViceCity {
     /// Opens `models/gta3.img` in the install folder `root`.
     pub fn open(root: &Path) -> Result<Self, ViceCityError> {
         Ok(Self {
+            root: root.to_path_buf(),
             archive: ImgArchive::open_pair(&root.join("models").join("gta3"))?,
         })
     }
 
+    /// Loads an animation package: `ped` (the characters, in `anim/ped.ifp`)
+    /// or one of the IFP files of `gta3.img` (`colt45`, `python`...).
+    pub fn load_animations(&mut self, name: &str) -> Result<Vec<Animation>, ViceCityError> {
+        let (file, bytes) = match self.read(name, "ifp") {
+            Ok(found) => found,
+            Err(ViceCityError::NotFound(file)) => {
+                let path = self.root.join("anim").join(&file);
+                if !path.is_file() {
+                    return Err(ViceCityError::NotFound(file));
+                }
+                let bytes =
+                    std::fs::read(&path).map_err(|source| ViceCityError::Io { path, source })?;
+                (file, bytes)
+            }
+            Err(err) => return Err(err),
+        };
+        let package = ifp::parse_ifp(&bytes)
+            .map_err(|source| ViceCityError::Animation { name: file, source })?;
+        Ok(package.animations.iter().map(animation_from_ifp).collect())
+    }
+
     /// Loads a model of `gta3.img`: `player`, `player.dff`, any case.
     pub fn load_model(&mut self, name: &str) -> Result<Model, ViceCityError> {
-        let file = if name.to_lowercase().ends_with(".dff") {
+        let (file, bytes) = self.read(name, "dff")?;
+        let clump = dff::parse_dff(&bytes).map_err(|source| ViceCityError::Format {
+            name: file.clone(),
+            source,
+        })?;
+        model_from_clump(&file, &clump).map_err(|message| ViceCityError::Unsupported {
+            name: file,
+            message,
+        })
+    }
+
+    /// Decodes the textures of a dictionary of `gta3.img`: `player` or
+    /// `player.txd`, any case. A model usually has a dictionary of the
+    /// same name.
+    pub fn load_textures(&mut self, name: &str) -> Result<Vec<Texture>, ViceCityError> {
+        let (file, bytes) = self.read(name, "txd")?;
+        decode_txd(&file, &bytes)
+    }
+
+    /// Reads an entry of `gta3.img`, adding `extension` to `name` if needed.
+    /// Returns the name as stored in the archive, and the content.
+    fn read(&mut self, name: &str, extension: &str) -> Result<(String, Vec<u8>), ViceCityError> {
+        let file = if name.to_lowercase().ends_with(&format!(".{extension}")) {
             name.to_owned()
         } else {
-            format!("{name}.dff")
+            format!("{name}.{extension}")
         };
         let entry = self
             .archive
@@ -53,15 +118,34 @@ impl ViceCity {
             .ok_or(ViceCityError::NotFound(file))?
             .clone();
         let bytes = self.archive.read(&entry)?;
-        let clump = dff::parse_dff(&bytes).map_err(|source| ViceCityError::Format {
-            name: entry.name.clone(),
-            source,
-        })?;
-        model_from_clump(&entry.name, &clump).map_err(|message| ViceCityError::Unsupported {
-            name: entry.name.clone(),
-            message,
-        })
+        Ok((entry.name, bytes))
     }
+}
+
+/// Decodes every texture of a TXD file. `name` is used in error messages.
+pub fn decode_txd(name: &str, bytes: &[u8]) -> Result<Vec<Texture>, ViceCityError> {
+    let dictionary = txd::parse_txd(bytes).map_err(|source| ViceCityError::Format {
+        name: name.to_owned(),
+        source,
+    })?;
+    dictionary
+        .textures
+        .iter()
+        .map(|texture| {
+            let image = texture
+                .decode_rgba8()
+                .map_err(|err| ViceCityError::Unsupported {
+                    name: name.to_owned(),
+                    message: err.to_string(),
+                })?;
+            Ok(Texture {
+                name: texture.name.clone(),
+                width: image.width,
+                height: image.height,
+                rgba8: image.pixels,
+            })
+        })
+        .collect()
 }
 
 /// Converts a parsed DFF into a neutral model. Each atomic becomes a mesh
@@ -78,6 +162,11 @@ pub fn model_from_clump(name: &str, clump: &Clump) -> Result<Model, String> {
                 .unwrap_or_else(|| format!("frame {index}")),
             parent: frame.parent,
             local: frame.transform.to_cols_array(),
+            bone_id: frame
+                .hanim
+                .as_ref()
+                .map(|hanim| hanim.node_id)
+                .filter(|&id| id >= 0),
         })
         .collect();
 
@@ -126,6 +215,7 @@ pub fn model_from_clump(name: &str, clump: &Clump) -> Result<Model, String> {
                     .collect()
             }),
             primitives,
+            skin: geometry.skin.as_ref().map(mesh_skin).transpose()?,
         });
 
         if let (Some(skin), None) = (&geometry.skin, &skeleton) {
@@ -139,6 +229,58 @@ pub fn model_from_clump(name: &str, clump: &Clump) -> Result<Model, String> {
         meshes,
         skeleton,
     })
+}
+
+/// Joint indices and weights of the vertices. A slot without weight points
+/// to bone 0, so that every index is valid for the renderer.
+fn mesh_skin(skin: &dff::Skin) -> Result<MeshSkin, String> {
+    let mut joints = Vec::with_capacity(skin.bone_indices.len());
+    for (indices, weights) in skin.bone_indices.iter().zip(&skin.weights) {
+        let mut vertex = [0u16; 4];
+        for slot in 0..4 {
+            if weights[slot] > 0.0 {
+                if indices[slot] >= skin.bone_count {
+                    return Err(format!(
+                        "os {} pondéré alors que le skin en a {}",
+                        indices[slot], skin.bone_count
+                    ));
+                }
+                vertex[slot] = u16::from(indices[slot]);
+            }
+        }
+        joints.push(vertex);
+    }
+    Ok(MeshSkin {
+        joints,
+        weights: skin.weights.clone(),
+    })
+}
+
+/// Converts an IFP animation. The stored quaternions are the inverse of the
+/// bone rotations (see docs/formats/ifp.md): keys hold the local rotation.
+pub fn animation_from_ifp(animation: &ifp::Animation) -> Animation {
+    Animation {
+        name: animation.name.clone(),
+        duration: animation.duration(),
+        tracks: animation
+            .objects
+            .iter()
+            .map(|object| Track {
+                bone_name: object.name.clone(),
+                bone_id: object.bone_id,
+                keys: object
+                    .keyframes
+                    .iter()
+                    .map(|keyframe| Key {
+                        time: keyframe.time,
+                        rotation: keyframe.local_rotation(),
+                        translation: keyframe.translation,
+                        scale: keyframe.scale,
+                    })
+                    .collect(),
+            })
+            .collect(),
+    }
 }
 
 /// Bone `i` of the skin is node `i` of the HAnim hierarchy, found among the
@@ -308,6 +450,62 @@ mod tests {
         assert_eq!(primitive.material.texture.as_deref(), Some("player"));
         assert_eq!(primitive.material.base_color, [1.0; 4]);
         assert_eq!((model.vertex_count(), model.triangle_count()), (4, 2));
+
+        // HAnim IDs; -1 (not a bone) gives none.
+        let ids: Vec<_> = model.nodes.iter().map(|node| node.bone_id).collect();
+        assert_eq!(ids, [None, Some(2), Some(1)]);
+        let skin = mesh.skin.as_ref().unwrap();
+        assert_eq!(skin.joints[0], [0; 4]);
+        assert_eq!(skin.weights[0], [1.0, 0.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn unweighted_skin_slots_point_to_bone_zero() {
+        let mut clump = clump();
+        let skin = clump.geometries[0].skin.as_mut().unwrap();
+        skin.bone_indices[0] = [1, 200, 0, 0];
+        skin.weights[0] = [1.0, 0.0, 0.0, 0.0];
+        let model = model_from_clump("test.dff", &clump).unwrap();
+        assert_eq!(
+            model.meshes[0].skin.as_ref().unwrap().joints[0],
+            [1, 0, 0, 0]
+        );
+
+        // A weighted slot past the bones is an error.
+        let skin = clump.geometries[0].skin.as_mut().unwrap();
+        skin.weights[0] = [0.5, 0.5, 0.0, 0.0];
+        assert!(model_from_clump("test.dff", &clump).is_err());
+    }
+
+    #[test]
+    fn animations_hold_local_rotations_and_find_their_bones() {
+        use formats_rw::ifp::{self, AnimationObject, Keyframe, KeyframeKind};
+        let object = |name: &str, bone_id| AnimationObject {
+            name: name.into(),
+            bone_id,
+            links: None,
+            kind: KeyframeKind::Rotation,
+            keyframes: vec![Keyframe {
+                rotation: [0.5, 0.5, 0.5, 0.5],
+                translation: None,
+                scale: None,
+                time: 0.25,
+            }],
+        };
+        let animation = animation_from_ifp(&ifp::Animation {
+            name: "run".into(),
+            objects: vec![object("whatever", Some(2)), object("PELVIS", None)],
+        });
+        assert_eq!(animation.duration, 0.25);
+        assert_eq!(
+            animation.tracks[0].keys[0].rotation,
+            [-0.5, -0.5, -0.5, 0.5]
+        );
+
+        let model = model_from_clump("test.dff", &clump()).unwrap();
+        // By bone ID first, then by name.
+        assert_eq!(animation.tracks[0].node_in(&model), Some(1));
+        assert_eq!(animation.tracks[1].node_in(&model), Some(2));
     }
 
     #[test]

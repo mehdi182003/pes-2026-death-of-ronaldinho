@@ -9,8 +9,10 @@ use asset_bridge::vice_city::{ViceCity, ViceCityError};
 use std::path::Path;
 
 use formats_rw::dff::{self, Clump, Matrix};
+use formats_rw::ifp;
 use formats_rw::img::{DIR_ENTRY_SIZE, DirEntry, ImgArchive};
 use formats_rw::rw::{self, Version};
+use formats_rw::txd::{self, raster_format};
 
 fn open_gta3(vice_city: &Path) -> ImgArchive {
     ImgArchive::open_pair(&vice_city.join("models").join("gta3")).unwrap()
@@ -268,4 +270,260 @@ fn player_model_converts_to_the_neutral_model() {
         game.load_model("pas-un-modele"),
         Err(ViceCityError::NotFound(_))
     ));
+}
+
+/// Every TXD of gta3.img, and the loose ones of models/ and txd/, parses and
+/// decodes. INTRO.TXD is left out: an older RenderWare 3.1 file whose raster
+/// layout differs and which Chaos FC does not need.
+#[test]
+fn every_txd_parses_and_decodes() {
+    let Some(vice_city) = game_dir(Game::ViceCity) else {
+        return;
+    };
+    let mut files: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut archive = open_gta3(&vice_city);
+    let entries: Vec<DirEntry> = archive
+        .entries()
+        .iter()
+        .filter(|entry| entry.name.to_lowercase().ends_with(".txd"))
+        .cloned()
+        .collect();
+    for entry in &entries {
+        files.push((entry.name.clone(), archive.read(entry).unwrap()));
+    }
+    for folder in ["models", "txd"] {
+        for file in std::fs::read_dir(vice_city.join(folder)).unwrap() {
+            let path = file.unwrap().path();
+            let name = path.file_name().unwrap().to_string_lossy().to_string();
+            if name.to_lowercase().ends_with(".txd") && !name.eq_ignore_ascii_case("intro.txd") {
+                files.push((name, std::fs::read(&path).unwrap()));
+            }
+        }
+    }
+    assert!(files.len() > entries.len(), "TXD isolés introuvables");
+
+    let mut failures = Vec::new();
+    let mut texture_count = 0;
+    for (name, bytes) in &files {
+        match txd::parse_txd(bytes) {
+            Ok(dictionary) => {
+                for texture in &dictionary.textures {
+                    texture_count += 1;
+                    if let Err(err) = texture.decode_rgba8() {
+                        failures.push(format!("{name} : {err}"));
+                    }
+                }
+            }
+            Err(err) => failures.push(format!("{name} : {err}")),
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} échec(s) sur {texture_count} textures :
+{}",
+        failures.len(),
+        failures.join(
+            "
+"
+        )
+    );
+}
+
+#[test]
+fn player_txd_holds_tommy_texture() {
+    let Some(vice_city) = game_dir(Game::ViceCity) else {
+        return;
+    };
+    let mut archive = open_gta3(&vice_city);
+    let entry = archive.find("player.txd").unwrap().clone();
+    let dictionary = txd::parse_txd(&archive.read(&entry).unwrap()).unwrap();
+    let [texture] = dictionary.textures.as_slice() else {
+        panic!("une seule texture attendue");
+    };
+    assert_eq!(texture.name, "player");
+    assert_eq!((texture.width, texture.height), (256, 256));
+    assert_eq!(
+        texture.raster_format,
+        raster_format::FORMAT_565 | raster_format::MIPMAP
+    );
+    assert_eq!((texture.compression, texture.levels.len()), (1, 9));
+
+    let image = texture.decode_rgba8().unwrap();
+    assert_eq!(image.pixels.len(), 256 * 256 * 4);
+    assert!(image.pixels.chunks(4).all(|pixel| pixel[3] == 255));
+    let distinct: std::collections::HashSet<&[u8]> = image.pixels.chunks(4).collect();
+    assert!(
+        distinct.len() > 1000,
+        "{} couleurs seulement",
+        distinct.len()
+    );
+}
+
+#[test]
+fn player_textures_load_by_name() {
+    let Some(vice_city) = game_dir(Game::ViceCity) else {
+        return;
+    };
+    let mut game = ViceCity::open(&vice_city).unwrap();
+    let textures = game.load_textures("player").unwrap();
+    let [texture] = textures.as_slice() else {
+        panic!("une seule texture attendue");
+    };
+    assert_eq!(
+        (texture.name.as_str(), texture.width, texture.height),
+        ("player", 256, 256)
+    );
+    assert!(texture.is_opaque());
+
+    // The model's material names this texture.
+    let model = game.load_model("player").unwrap();
+    let material = &model.meshes[0].primitives[0].material;
+    assert_eq!(material.texture.as_deref(), Some("player"));
+}
+
+#[test]
+fn every_ifp_parses() {
+    let Some(vice_city) = game_dir(Game::ViceCity) else {
+        return;
+    };
+    let ped =
+        ifp::parse_ifp(&std::fs::read(vice_city.join("anim").join("ped.ifp")).unwrap()).unwrap();
+    assert_eq!(ped.name, "ped");
+    assert_eq!(ped.animations.len(), 234);
+
+    let mut archive = open_gta3(&vice_city);
+    let entries: Vec<DirEntry> = archive
+        .entries()
+        .iter()
+        .filter(|entry| entry.name.to_lowercase().ends_with(".ifp"))
+        .cloned()
+        .collect();
+    assert_eq!(entries.len(), 28);
+    let mut packages = vec![ped];
+    for entry in &entries {
+        let bytes = archive.read(entry).unwrap();
+        match ifp::parse_ifp(&bytes) {
+            Ok(package) => packages.push(package),
+            Err(err) => panic!("{} : {err}", entry.name),
+        }
+    }
+
+    // Unit quaternions, times in increasing order.
+    for package in &packages {
+        for animation in &package.animations {
+            for object in &animation.objects {
+                let keyframes = &object.keyframes;
+                assert!(keyframes[0].time >= 0.0);
+                assert!(keyframes.windows(2).all(|k| k[0].time <= k[1].time));
+                for keyframe in keyframes {
+                    let norm: f32 = keyframe.rotation.iter().map(|c| c * c).sum::<f32>().sqrt();
+                    assert!(
+                        (norm - 1.0).abs() < 1e-3,
+                        "{} / {}",
+                        animation.name,
+                        object.name
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Rotation matrix (columns right, up, at) of a unit quaternion (x, y, z, w).
+fn quaternion_matrix([x, y, z, w]: [f32; 4]) -> Matrix {
+    Matrix {
+        right: [
+            1.0 - 2.0 * (y * y + z * z),
+            2.0 * (x * y + z * w),
+            2.0 * (x * z - y * w),
+        ],
+        up: [
+            2.0 * (x * y - z * w),
+            1.0 - 2.0 * (x * x + z * z),
+            2.0 * (y * z + x * w),
+        ],
+        at: [
+            2.0 * (x * z + y * w),
+            2.0 * (y * z - x * w),
+            1.0 - 2.0 * (x * x + y * y),
+        ],
+        position: [0.0; 3],
+    }
+}
+
+/// Angle, in degrees, between two rotation matrices.
+fn angle_between(a: &Matrix, b: &Matrix) -> f32 {
+    let trace: f32 = [(a.right, b.right), (a.up, b.up), (a.at, b.at)]
+        .iter()
+        .map(|(u, v)| u[0] * v[0] + u[1] * v[1] + u[2] * v[2])
+        .sum();
+    ((trace - 1.0) / 2.0).clamp(-1.0, 1.0).acos().to_degrees()
+}
+
+/// run_player drives the bones of player.dff by their HAnim IDs, and its
+/// stored quaternions are the inverse of the bone rotations: their conjugate
+/// is close to the bind pose for the trunk and the head.
+#[test]
+fn run_player_drives_tommy_skeleton() {
+    let Some(vice_city) = game_dir(Game::ViceCity) else {
+        return;
+    };
+    let ped =
+        ifp::parse_ifp(&std::fs::read(vice_city.join("anim").join("ped.ifp")).unwrap()).unwrap();
+    let run = ped.find("run_player").unwrap();
+    assert_eq!(run.objects.len(), 22);
+    assert!((run.duration() - 0.6667).abs() < 1e-3, "{}", run.duration());
+
+    let clump = player(&vice_city);
+    for object in &run.objects {
+        let id = object.bone_id.unwrap();
+        let frame = clump
+            .frames
+            .iter()
+            .find(|frame| frame.hanim.as_ref().is_some_and(|h| h.node_id == id))
+            .unwrap_or_else(|| panic!("os {id} absent de player.dff"));
+        assert_eq!(frame.name.as_deref(), Some(object.name.as_str()));
+
+        if ["Pelvis", "Neck", "Head"].contains(&object.name.as_str()) {
+            let keyframe = object.keyframes[0];
+            let stored = angle_between(&frame.transform, &quaternion_matrix(keyframe.rotation));
+            let local = angle_between(
+                &frame.transform,
+                &quaternion_matrix(keyframe.local_rotation()),
+            );
+            assert!(
+                local < 10.0 && local < stored,
+                "{} : {local} / {stored}",
+                object.name
+            );
+        }
+    }
+}
+
+#[test]
+fn run_player_binds_to_the_player_model() {
+    let Some(vice_city) = game_dir(Game::ViceCity) else {
+        return;
+    };
+    let mut game = ViceCity::open(&vice_city).unwrap();
+    let animations = game.load_animations("ped").unwrap();
+    assert_eq!(animations.len(), 234);
+    let run = animations.iter().find(|a| a.name == "run_player").unwrap();
+    let model = game.load_model("player").unwrap();
+    for track in &run.tracks {
+        let node = track
+            .node_in(&model)
+            .unwrap_or_else(|| panic!("{} sans nœud", track.bone_name));
+        assert_eq!(model.nodes[node].name, track.bone_name);
+    }
+    // The skin weights of Tommy add up to 1 and point to existing bones.
+    let skin = model.meshes[0].skin.as_ref().unwrap();
+    let bones = model.skeleton.as_ref().unwrap().bones.len();
+    for (joints, weights) in skin.joints.iter().zip(&skin.weights) {
+        assert!((weights.iter().sum::<f32>() - 1.0).abs() < 1e-3);
+        assert!(joints.iter().all(|&joint| usize::from(joint) < bones));
+    }
+
+    // Weapon animations live in gta3.img.
+    assert!(!game.load_animations("colt45").unwrap().is_empty());
 }

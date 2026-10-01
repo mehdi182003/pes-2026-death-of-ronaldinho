@@ -12,6 +12,8 @@ Règles :
 | IMG v1 + DIR | Vice City | [img.md](img.md) | Vérifié sur `models/gta3.img` |
 | Flux RenderWare (chunks) | Vice City | [renderware.md](renderware.md) | Vérifié sur les 4617 DFF |
 | DFF (modèles) | Vice City | [dff.md](dff.md) | Vérifié sur les 4617 DFF ; texture : une hypothèse |
+| TXD (textures) | Vice City | [txd.md](txd.md) | Vérifié sur 1399 TXD ; ordre des couleurs des palettes à confirmer à l'œil |
+| IFP (animations) | Vice City | [ifp.md](ifp.md) | Vérifié sur les 29 IFP ; liens de la variante 48 octets : hypothèse |
 
 ## Outils d'inspection
 
@@ -20,6 +22,8 @@ cargo run -p asset-tools -- img list --filter player      # contenu de models/gt
 cargo run -p asset-tools -- img extract player.dff        # copie dans le dossier de cache
 cargo run -p asset-tools -- dump vc:player.dff             # dump annoté (arbre des chunks RenderWare)
 cargo run -p asset-tools --bin viewer -- player            # visualiseur 3D (validation à l'œil)
+cargo run -p asset-tools --bin viewer -- player --anim run_player   # animation
+cargo run -p asset-tools --bin viewer -- --textures vc:player.txd     # textures à plat
 ```
 
 Les fichiers extraits vont dans le dossier de cache de l'utilisateur (`%LOCALAPPDATA%\chaos-fc\extracted\` sous Windows), jamais dans le dépôt. On peut les ouvrir dans ImHex.
