@@ -16,9 +16,9 @@ Règles :
 | IFP (animations) | Vice City | [ifp.md](ifp.md) | Vérifié sur les 29 IFP ; liens de la variante 48 octets : hypothèse |
 | SFX (sons) | Vice City | [sfx.md](sfx.md) | Vérifié sur la banque ; numéros des sons d'armes : à confirmer à l'oreille |
 | weapon.dat (armes) | Vice City | [weapon-dat.md](weapon-dat.md) | Vérifié sur les 37 armes ; unités des instants : hypothèse |
-| AFS, compression, conteneurs | PES 6 | [afs.md](afs.md) | Vérifié sur la démo PC |
-| Textures | PES 6 | [pes-texture.md](pes-texture.md) | 1184 décodées sur la démo ; palettes externes et « swizzle » : non pris en charge |
-| Modèles 3D | PES 6 | [pes-model.md](pes-model.md) | 751 modèles sur 762 lus ; échelle : hypothèse |
+| AFS, compression, conteneurs | PES 6 | [afs.md](afs.md) | Vérifié sur le jeu complet ; 1151 fichiers chiffrés |
+| Textures | PES 6 | [pes-texture.md](pes-texture.md) | 5165 décodées ; palettes externes et « swizzle » : non pris en charge |
+| Modèles 3D | PES 6 | [pes-model.md](pes-model.md) | 9546 modèles sur 9647 lus ; squelette et échelle : hypothèses |
 
 ## Outils d'inspection
 

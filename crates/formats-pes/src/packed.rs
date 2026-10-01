@@ -2,7 +2,7 @@
 //! `0_text.afs` and `e_text.afs`, followed by the file's data, compressed
 //! with zlib or stored as is.
 //!
-//! Layout checked on the PES 6 PC demo, see `docs/formats/afs.md`.
+//! Layout checked on the full PES 6 PC game, see `docs/formats/afs.md`.
 
 use std::io::Read;
 
@@ -12,7 +12,8 @@ pub const HEADER_SIZE: usize = 32;
 /// The header of a packed file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PackedHeader {
-    /// Second byte. 0, 1, 2, 4, 5, 6 or 14 in the demo.
+    /// Second byte. 0, 1, 4, 5, 6 or 14 in `0_text.afs` (8858 of 9711
+    /// files: 6).
     // HYPOTHÈSE: a kind of content; files sharing a value look alike once
     // unpacked (6: a table of sub-files, 1: an image header), but its exact
     // meaning is not documented.
@@ -33,7 +34,7 @@ impl PackedHeader {
     /// Recognised by its shape: bytes 0 and 3 are zero, byte 2 is 0 or 1,
     /// and the data fills the rest of the file, give or take up to 15 bytes
     /// of padding: sub-files of containers are aligned on 16 bytes (padding
-    /// of 0 to 15 bytes seen in the demo), files of the archives have at
+    /// of 0 to 15 bytes seen in the game), files of the archives have at
     /// most one.
     pub fn parse(bytes: &[u8]) -> Option<Self> {
         let header = bytes.get(..HEADER_SIZE)?;

@@ -4,7 +4,7 @@ Signature `20 05 04 20`. Un modèle se compose de parties de sommets, d'une band
 
 ## Documentation publique
 
-Aucune description trouvée pour PES 6 (les outils publics visent les PES récents, au format `WESYS`). Tout ce qui suit vient des 762 modèles de la démo PC : 751 se lisent en entier, avec les vérifications ci-dessous.
+Aucune description trouvée pour PES 6 (les outils publics visent les PES récents, au format `WESYS`). Tout ce qui suit vient des 9647 modèles du jeu complet PC : 9546 se lisent en entier, avec les vérifications ci-dessous.
 
 ## En-tête
 
@@ -35,7 +35,7 @@ Les 4 bits bas des drapeaux donnent le **nombre d'os par sommet** (0 à 4). Un s
 | couleur | 4 × u8 | il reste 4 ou 16 octets |
 | coordonnées de texture | 2 × f32 | toujours |
 
-Formats vus sur la démo (taille, drapeaux) : (32, 0) 512 parties, (40, 2) 212, (40, 3) 206, (24, 0) 139, (36, 1) 123, (40, 4) 88, (24, 0x20) 30, (32, 0x20) 24, (28, 1) 11, (36, 0x20) 5. HYPOTHÈSE : le bit 0x20 (parties de stade) ne change pas l'ordre des champs.
+Formats vus dans le jeu (taille, drapeaux : nombre de parties) : (40, 2) 6028, (40, 3) 5304, (32, 0) 4397, (36, 1) 3250, (24, 0) 2502, (40, 4) 2110, (24, 0x20) 1868, (32, 0x20) 54, (28, 1) 40, (36, 0x20) 5, (44, 2) 3, (44, 4) 2. HYPOTHÈSE : le bit 0x20 (parties de stade) ne change pas l'ordre des champs.
 
 Les normales n'ont pas toujours une longueur de 1 (8 dans les visages) : la conversion les ramène à 1.
 
@@ -63,30 +63,31 @@ Vérifications faites à chaque lecture, vraies sur les 751 modèles : les indic
 
 ## Squelette
 
-Juste après le programme de dessin (offset donné par le u32 à l'offset 4) : un nombre d'os (u32), puis par os 6 × f32 (trois angles en radians, autour de X, Y et Z, puis une translation), puis les parents (i16 par os, −1 pour la racine). Vérifié sur les 762 modèles : 700 n'ont pas d'os ; les 26 corps de joueurs et d'arbitres en ont 19, avec les parents `−1, 0, 1, 1, 2, 3, 0, 6, 6, 7, 8, 6, 4, 5, 9, 10, 11, 14, 15`.
+Juste après le programme de dessin (offset donné par le u32 à l'offset 4) : un nombre d'os (u32), puis par os 6 × f32 (trois angles en radians, autour de X, Y et Z, puis une translation), puis les parents (i16 par os, −1 pour la racine). Vérifié sur les modèles du jeu complet : la plupart n'ont pas d'os ; les 594 corps de joueurs et d'arbitres en ont 19, avec les parents `−1, 0, 1, 1, 2, 3, 0, 6, 6, 7, 8, 6, 4, 5, 9, 10, 11, 14, 15`.
 
 Chaque os donne le passage de l'espace du modèle à celui de l'os : un point `p` du modèle est en `R·p + t` pour l'os. L'articulation est donc en `−Rᵀ·t`.
 
-HYPOTHÈSE : `R = Ry·Rz·Rx`. Avec cet ordre, les articulations des bras (épaules à ±80,8, coudes à ±205,8, poignets à ±297,3, toutes à 602,7 de haut) et de la tête (670,6) tombent où le maillage les attend, et une tête se fixe à l'endroit. Celles des jambes et du dos ne tombent pas encore juste, quel que soit l'ordre : à reprendre au jalon J6.
+HYPOTHÈSE : `R = Rz·Ry·Rx` (X d'abord). Avec cet ordre, les articulations des bras (épaules à ±80,8, coudes à ±205,8, poignets à ±297,3, toutes à 602,7 de haut) et de la tête (670,6) tombent où le maillage les attend, et une tête posée sur l'os 16 regarde du côté où pointent les orteils (+Z). L'ordre `Ry·Rz·Rx`, essayé d'abord, place aussi bien les articulations mais tourne la tête vers l'arrière (constaté à l'œil, puis vérifié par le test `player_body_gets_its_head_on_the_shoulders`). Celles des jambes et du dos ne tombent pas encore juste, quel que soit l'ordre : à reprendre au jalon J6.
 
 ## Repère et échelle
 
 - Y vers le haut, pieds à Y = 0 ; les bras d'un personnage en T s'étendent le long de X.
-- HYPOTHÈSE : 420 unités par mètre (`retarget::PES6_UNITS_PER_METRE`), pour que l'arbitre (756 unités, tête comprise) mesure 1,80 m. Un corps sans tête fait environ 690 unités (1,64 m) et une tête environ 90 (21 cm) : cohérent. Le ballon (11 unités de diamètre) est mis à l'échelle par le jeu et ne sert pas de référence.
+- HYPOTHÈSE : 420 unités par mètre (`retarget::PES6_UNITS_PER_METRE`), pour qu'un joueur mesure environ 1,80 m : le corps n° 1064 va de −18 (semelles) à 673,8 unités (cou), la tête posée monte jusqu'à environ 750 unités, soit 768 unités (1,83 m) ; une tête fait environ 90 unités (21 cm). Le ballon (11 unités de diamètre) est mis à l'échelle par le jeu et ne sert pas de référence.
 - HYPOTHÈSE : le premier triangle d'une bande est dans le sens direct (à vérifier à l'œil : faces arrière masquées).
 
-## Modèles repérés (démo)
+## Modèles repérés
 
 | Numéro | Contenu |
 | --- | --- |
-| 431 | arbitre complet (corps et tête), 1796 sommets ; texture n° 432 (512 × 256), variantes 433 et 434 |
-| 1064, 1104, 1105, 1108, 1110, 1111 | corps de joueur en T, sans tête, 19 os, 39 parties, 5 niveaux de détail. Les maillots de la démo sont chiffrés ; la chasuble d'entraînement 296/1/0 (512 × 256 : chasuble, short, chaussettes, chaussures) s'y applique |
-| 1943 et voisins | tête : 2 modèles (tête, cheveux ?) et une texture de visage ; se place sur l'os 16 du corps |
-| 417 à 419 | présentatrice des menus (veste, visage, cheveux) |
+| 1060 et voisins (dont 1064) | corps de joueur en T, sans tête, 19 os, 39 parties, 5 niveaux de détail |
+| 288 à 297 | ensembles d'entraînement : 17 modèles et 24 textures, dont la chasuble jaune 296/1/0 (128 × 128 : chasuble, short, chaussettes, chaussures), qui s'applique au corps |
+| 1891 à 2937 (visages) | tête : 2 modèles (la même tête en deux niveaux de détail) et une texture de visage ; se place sur l'os 16 du corps |
+
+Les grandes textures de maillots sont chiffrées (voir [afs.md](afs.md)).
 
 ## Fichiers testés
 
-`crates/asset-bridge/tests/pes6_files.rs` : `models_parse_with_consistent_draws` (tous les modèles de `0_text.afs`) et `referee_loads_textured_at_a_plausible_size`.
+`crates/asset-bridge/tests/pes6_files.rs` : `models_parse_with_consistent_draws` (tous les modèles de `0_text.afs`) et `player_body_loads_textured_at_a_plausible_size`.
 
 Test `player_body_gets_its_head_on_the_shoulders` : la tête se place au-dessus du cou.
 

@@ -164,27 +164,27 @@ Références : le wiki GTAMods (pages RenderWare, DFF, TXD, IFP, IMG), librw et 
 
 | Élément | État des connaissances | Notes |
 | --- | --- | --- |
-| Archives AFS | Vérifié (J4) | En-tête `AFS`, nombre de fichiers, table offset/taille. Démo : `0_sound.afs`, `0_text.afs`, `e_text.afs`, sans noms de fichiers. |
+| Archives AFS | Vérifié (J4) | En-tête `AFS`, nombre de fichiers, table offset/taille. Jeu complet : `0_text.afs`, `0_sound.afs`, `f_text.afs`, `f_sound.afs` ; noms de fichiers illisibles. |
 | Compression interne | Vérifiée (J4) | En-tête de 32 octets (type, drapeau zlib, tailles) puis zlib ; beaucoup de fichiers sont des conteneurs de sous-fichiers. |
 | Modèles joueurs, ballon, stade | Outillé par la scène de modding | Corps, visages, cheveux, maillots en textures. S'appuyer sur la documentation des outils de modding PES 6. |
 | Animations | Peu documentées | Principal chantier de reverse engineering du projet. |
 
-**Constats (J4)**, détaillés dans `docs/formats/afs.md`, sur la démo PC (la seule copie disponible) : les archives n'ont pas de noms de fichiers, et la plupart des emplacements de `0_text.afs` sont vides (6035 sur 7152). Les fichiers sont identifiés par leur signature, et situés grâce à la carte communautaire de `0_text.afs`, vérifiée sur la démo. Un visage est un conteneur de deux modèles et d'une texture. 16 fichiers de la plage des maillots ne sont pas du zlib (contenu d'aspect chiffré) et restent illisibles.
+**Constats (J4)**, détaillés dans `docs/formats/afs.md`, sur le **jeu complet** PC en français (`0_text.afs` : 9806 fichiers, `0_sound.afs`, `f_sound.afs`, `f_text.afs`) : le répertoire de noms des archives est illisible, les fichiers sont donc identifiés par leur signature et situés grâce à la carte communautaire de `0_text.afs`, qui correspond au jeu complet. Un visage est un conteneur de deux modèles (la même tête en deux niveaux de détail) et d'une texture. **1151 fichiers sont chiffrés** : la grande texture de chaque tenue (453 maillots) et le bloc n° 1193 à 1890 (698 fichiers).
 
 **Décisions (J4) :**
 
-- `formats-pes` lit les archives (`afs`), l'en-tête compressé (`packed`, avec flate2) et reconnaît les contenus (`content`) ; `asset-bridge::pes6` ouvre le dossier `dat` et porte la carte de `0_text.afs`. Les fichiers sont désignés par archive et numéro (`0_text` n° 1943), faute de noms.
-- Les signatures `20 05 04 20` (modèles) et `94 72 85 29` (textures) restent des hypothèses jusqu'à l'affichage d'un modèle au jalon J5. Les contenus non reconnus sont listés avec leurs premiers octets, jamais devinés.
-- Les tests sur les fichiers de PES vérifient des propriétés (contenus des sections, taux de fichiers lisibles), pas les nombres exacts de la démo, pour rester valables sur le jeu complet.
+- `formats-pes` lit les archives (`afs`), l'en-tête compressé (`packed`, avec flate2) et reconnaît les contenus (`content`) ; `asset-bridge::pes6` ouvre le dossier `dat` et porte la carte de `0_text.afs`. Les fichiers sont désignés par archive et numéro (`0_text:1943`), faute de noms.
+- Les contenus non reconnus sont listés avec leurs premiers octets, jamais devinés.
+- Les tests sur les fichiers de PES vérifient des propriétés (contenus des sections, fichiers illisibles cantonnés aux zones chiffrées), pas des nombres exacts.
+- **Les fichiers chiffrés ne sont pas déchiffrés.** C'est une protection du jeu ; la contourner pose une question juridique (mesures techniques de protection) qui dépasse les règles du projet. Chaos FC s'en passe, sauf décision contraire de Mokhmad et Mehdi, à consigner ici.
 
-**Reste à faire (J4)** : le jalon a été validé sur la démo de PES 6 sans que tout soit identifié. À reprendre :
+**Reste à faire (J4)** : validé avec réserves. À reprendre :
 
-- **Formats inconnus** (détails dans `docs/formats/afs.md`) : `07 12 01 20` (923 sous-fichiers, peut-être des animations : à tester en J6), la famille `1a`/`9a`... (environ 1500 sous-fichiers), `18 39 84 29` (264), `19 11 01 20` (64), `aPDT` (22), le type 14 (`10 00 00 00`, 83) et les 88 fichiers de `e_text.afs`.
-- **Hypothèses à confirmer** : `20 05 04 20` = modèle (par l'affichage en J5) et `94 72 85 29` = texture (en-tête cohérent ; pixels à décoder en J5).
-- **16 maillots illisibles** (n° 5481 à 5562 de `0_text.afs`) : pas du zlib, contenu d'aspect chiffré. Un fichier (n° 7051) ne se décompresse pas.
-- **Jeu complet** : tout a été vérifié sur la démo seulement. Sur une copie complète de PES 6, relancer `afs summary` et les tests de `crates/asset-bridge/tests/pes6_files.rs`, et compléter la carte de `0_text.afs`.
+- **Formats inconnus** (détails dans `docs/formats/afs.md`) : `07 12 01 20` (963 sous-fichiers, peut-être des animations : à tester en J6), `19 11 01 20` (623), la famille `1a`/`9a`... (plus de 1000), de nombreuses petites tables, `18 39 84 29` (264), les fichiers « WE9 » et « WE8I », `aPDT` (22), le type 14 (433) et les fichiers de `f_text.afs`.
+- **Fichiers chiffrés** : 453 grandes textures de maillots et le bloc n° 1193 à 1890 ; le n° 9467 ne se décompresse pas.
+- **Hors carte** : beaucoup de fichiers restent à situer (corps de joueurs, ensembles d'entraînement, stades...).
 
-**Constats (J5)**, détaillés dans `docs/formats/pes-texture.md` et `docs/formats/pes-model.md` : les textures gardent les formats de la PlayStation 2 (palette de 256 couleurs réordonnée, ou 16 couleurs). Les modèles sont faits de parties de sommets (jusqu'à 4 os par sommet : prêts pour le skinning), d'une bande de triangles et d'un petit programme de dessin qui choisit partie, texture et os. Les maillots de la démo étant chiffrés, le joueur affiché porte **la chasuble d'entraînement** (n° 296/1/0) : corps de joueur n° 1064, tête et visage n° 1943, placés sur l'os de la tête du squelette (19 os). Le personnage n° 431 (premier essai) est un membre du staff en survêtement, pas un joueur.
+**Constats (J5)**, détaillés dans `docs/formats/pes-texture.md` et `docs/formats/pes-model.md` : les textures gardent les formats de la PlayStation 2 (palette de 256 couleurs réordonnée, ou 16 couleurs). Les modèles sont faits de parties de sommets (jusqu'à 4 os par sommet : prêts pour le skinning), d'une bande de triangles et d'un petit programme de dessin qui choisit partie, texture et os. Les grandes textures de maillots étant chiffrées, le joueur affiché porte **la chasuble d'entraînement** (n° 296/1/0) : corps de joueur n° 1064, tête et visage n° 1943, placés sur l'os de la tête du squelette (19 os, 594 corps dans le jeu).
 
 **Décisions (J5) :**
 
@@ -247,7 +247,7 @@ Le cœur du projet est un moteur de foot crédible. Tommy, l'arbitre et les corp
 
 On valide d'abord que les assets des deux jeux sont lisibles (J1 à J5), avant d'écrire la moindre ligne d'IA de foot. Un jalon n'est terminé que lorsque son critère est validé par Mokhmad sur sa machine.
 
-**Installations disponibles chez Mokhmad (1er octobre 2026) :** GTA Vice City (PC) installé ; PES 6 pas encore. **Chez Mehdi (1er octobre 2026) :** GTA Vice City (PC) et la **démo** PC de PES 6, sur laquelle J4 a été développé.
+**Installations disponibles chez Mokhmad (1er octobre 2026) :** GTA Vice City (PC) installé ; PES 6 pas encore. **Chez Mehdi (1er octobre 2026) :** GTA Vice City (PC) et PES 6 (PC, jeu complet en français ; J4 a été commencé sur la démo, puis repris sur le jeu complet).
 
 | Jalon | Livrable | Critère de réussite |
 | --- | --- | --- |
@@ -255,7 +255,7 @@ On valide d'abord que les assets des deux jeux sont lisibles (J1 à J5), avant d
 | J1 | Lecture IMG/DIR et DFF de Vice City | Tommy s'affiche en T-pose, géométrie correcte, dans le visualiseur. **Validé le 1er octobre 2026** (Tommy et le Colt 45 vérifiés par Mokhmad). |
 | J2 | TXD + IFP | Tommy texturé joue son animation de course en boucle. **Validé le 1er octobre 2026** (Tommy texturé court en boucle, vérifié par Mokhmad). |
 | J3 | Armes Vice City | Tommy tient une arme, tire dans une scène vide, avec le son d'origine. **Validé le 1er octobre 2026** (Colt 45, Uzi et Ruger : prise en main, visée, rythme et sons vérifiés par Mokhmad). |
-| J4 | Lecture AFS et décompression PES 6 | Liste complète des fichiers internes extraits et identifiés. **Validé le 1er octobre 2026 par Mehdi, avec réserves** (sur la démo de PES 6 ; voir « Reste à faire (J4) »). |
+| J4 | Lecture AFS et décompression PES 6 | Liste complète des fichiers internes extraits et identifiés. **Validé le 1er octobre 2026 par Mehdi, avec réserves** (revu sur le jeu complet ; voir « Reste à faire (J4) »). |
 | J5 | Modèle joueur PES 6 | Un joueur PES texturé s'affiche à côté de Tommy, à la bonne échelle. |
 | J6 | Squelettes et retargeting | Une même animation joue correctement sur Tommy et sur un joueur PES. |
 | J7 | Foot minimal | Terrain, ballon physique, un joueur contrôlé, buts qui comptent. |

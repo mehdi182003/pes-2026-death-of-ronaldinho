@@ -1,8 +1,8 @@
 //! What the files of the AFS archives contain: sub-file containers and the
 //! signatures of the formats found inside, recognised without file names
-//! (the PES 6 demo has none).
+//! (the names of the archives are not readable).
 //!
-//! Signatures checked on the PES 6 PC demo, see `docs/formats/afs.md`.
+//! Signatures checked on the full PES 6 PC game, see `docs/formats/afs.md`.
 
 use std::ops::Range;
 
@@ -16,7 +16,7 @@ pub const MODEL_MAGIC: [u8; 4] = [0x20, 0x05, 0x04, 0x20];
 
 /// Signature of the textures: first four bytes `94 72 85 29`.
 // HYPOTHÈSE: these are textures. They fill the kit, number and palette
-// slots of the community map, and every header of the demo gives a width
+// slots of the community map, and every header of the game gives a width
 // and a height (u16 at 20 and 22) with their base-2 logarithms rounded up
 // (bytes 26 and 27); their pixels are read in J5.
 pub const TEXTURE_MAGIC: [u8; 4] = [0x94, 0x72, 0x85, 0x29];
@@ -247,7 +247,7 @@ fn is_adx(data: &[u8]) -> bool {
 /// Layout: number of sub-files (u32), position of the offset table (u32,
 /// always 8), then one u32 offset per sub-file, in increasing order. A
 /// sub-file ends where the next one starts, the last one at the end of the
-/// data. 876 of the 881 files of kind 6 of the demo match.
+/// data. 7703 of the 7713 readable files of kind 6 of `0_text.afs` match.
 pub fn parse_container(data: &[u8]) -> Option<Vec<Range<usize>>> {
     let u32_at = |at: usize| {
         data.get(at..at + 4)

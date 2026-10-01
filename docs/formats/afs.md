@@ -9,15 +9,16 @@ Les données de PES 6 sont dans des archives AFS du dossier `dat`. La plupart de
 
 ## Copie testée
 
-Démo PC de PES 6 (`PES6 DEMO\dat`) : trois archives.
+Jeu complet PC, version française (`KONAMI\dat`, exécutable `PES6.exe` d'octobre 2006). Quatre archives et un fichier `opmov` (vidéo d'introduction, non étudiée).
 
-| Archive | Taille | Emplacements | Utilisés | Contenu |
-| --- | --- | --- | --- | --- |
-| `0_sound.afs` | 136 585 216 | 536 | 536 | sons ADX uniquement |
-| `0_text.afs` | 93 739 008 | 7152 | 1117 | modèles, textures, sons, données |
-| `e_text.afs` | 3 309 568 | 421 | 88 | données encore non identifiées |
+| Archive | Taille | Fichiers | Contenu |
+| --- | --- | --- | --- |
+| `0_text.afs` | 444 692 480 | 9806 | modèles, textures, sons, données |
+| `0_sound.afs` | 569 624 576 | 536 | sons ADX uniquement |
+| `f_sound.afs` | 354 930 688 | 13 127 | sons ADX uniquement (commentaires en français ?) |
+| `f_text.afs` | 24 838 144 | 421 | données encore non identifiées (textes et menus en français ?) |
 
-HYPOTHÈSE : le jeu complet a les mêmes archives (et d'autres) avec la même structure. À revérifier sur une copie complète.
+Aucun emplacement n'est vide. La version de démonstration, utilisée au début du jalon, a moins de fichiers (7152 dans `0_text.afs`, dont 6035 vides) et des numéros décalés hors des plages de la carte : seuls les chiffres du jeu complet sont donnés ici.
 
 ## Archive AFS : structure vérifiée
 
@@ -28,46 +29,42 @@ Little-endian.
 | 0 | 4 octets | `AFS\0` |
 | 4 | u32 | nombre d'emplacements *n* |
 | 8 | *n* × (u32, u32) | position et taille de chaque fichier, en octets |
-| 8 + 8*n* | u32, u32 | position et taille du « répertoire de noms » |
+| 8 + 8*n* | u32, u32 | position et taille du répertoire de noms |
 
-Constats sur la démo :
+Constats :
 
 - tous les fichiers commencent sur une frontière de 2048 octets, sans chevauchement, et finissent dans l'archive ;
-- **emplacements vides** : taille 0 (6035 sur 7152 dans `0_text.afs`, 333 sur 421 dans `e_text.afs`). Ce sont sans doute les fichiers du jeu complet retirés de la démo. On les garde à leur place : le jeu désigne ses fichiers par numéro ;
-- **pas de noms de fichiers** : le couple qui suit la table a la bonne taille (48 × *n* octets), mais sa position tombe au milieu des données d'un autre fichier (n° 338 de `0_text.afs`), et les octets y sont quelconques. Le code n'utilise ce répertoire que s'il est en dehors de toutes les données (`AfsTable::has_directory`), ce qui n'arrive jamais sur la démo.
+- **le répertoire de noms est illisible** : il a la bonne taille (48 × *n* octets), et dans `0_text.afs` il est bien en dehors des données (offset 0x8c90400), mais ses octets sont d'aspect aléatoire, comme les fichiers chiffrés ; dans les trois autres archives, sa position tombe au milieu d'un autre fichier. Le code n'utilise donc pas de noms : les fichiers sont désignés par archive et numéro (`0_text:1943`).
 
 ## Fichier compressé : en-tête de 32 octets
 
-Devant la plupart des fichiers de `0_text.afs` et `e_text.afs`, et devant certains sous-fichiers des conteneurs.
+Devant 9711 des 9806 fichiers de `0_text.afs`, et devant certains sous-fichiers des conteneurs.
 
 | Offset | Type | Champ |
 | --- | --- | --- |
 | 0 | u8 | 0 |
-| 1 | u8 | type : 0, 1, 2, 4, 5, 6 ou 14 sur la démo |
+| 1 | u8 | type (6 pour presque tous les conteneurs) |
 | 2 | u8 | 1 : données zlib ; 0 : données stockées telles quelles |
 | 3 | u8 | 0 |
 | 4 | u32 | taille des données après l'en-tête |
 | 8 | u32 | taille une fois décompressé |
-| 12 – 31 | | souvent nuls (pas toujours : 49 fichiers compressés de `0_text.afs`) |
+| 12 – 31 | | souvent nuls |
 | 32 | | données |
 
 Les signatures les plus fréquentes sont donc `00 06 01 00` (type 6, zlib) et `00 06 00 00` (type 6, stocké).
 
-Constats :
+Constats sur `0_text.afs` :
 
-- les données remplissent le fichier, à un octet de remplissage près pour les fichiers de l'archive (un seul cas), et **0 à 15 octets** pour les sous-fichiers des conteneurs, alignés sur 16 octets ;
-- **803 des 820 fichiers compressés** de `0_text.afs` (et les 29 de `e_text.afs`) se décompressent à la taille exacte annoncée, comme les 746 sous-fichiers compressés ;
-- **17 fichiers illisibles** dans `0_text.afs` : 16 ne sont pas du zlib (octets d'aspect aléatoire dès l'octet 16, entropie proche de 8 bits par octet, sans motif répétitif) et sont tous dans la plage des maillots (n° 5481 à 5562, par groupes de trois avec deux petits fichiers lisibles) ; 1 (n° 7051) commence bien par un en-tête zlib, mais la suite ne se décompresse pas. Ils sont signalés, pas devinés.
+- 8815 fichiers compressés et 896 stockés ; les données remplissent le fichier, à 15 octets de remplissage près (les sous-fichiers des conteneurs sont alignés sur 16 octets) ;
+- **7663 fichiers compressés se décompressent** à la taille exacte annoncée ;
+- **1152 ne se décompressent pas** : 1151 ont la forme d'un fichier compressé ordinaire (en-tête normal), mais leurs données ne sont pas du zlib et ont l'aspect d'octets aléatoires. Ils sont tous dans deux zones : **un fichier sur trois des maillots** (n° 5473, 5476, 5479... jusqu'à 6829, la grande texture de chaque tenue, 453 fichiers) et **le bloc n° 1193 à 1890** (698 fichiers, contenu inconnu). Le dernier, n° 9467, commence comme du zlib mais ne se décompresse pas ;
+- ces fichiers sont signalés, pas devinés. **Ce sont des fichiers protégés par le jeu** : Chaos FC ne cherche pas à les déchiffrer (voir `docs/BRIEF.md`, « Reste à faire (J4) »).
 
-Inconnues :
-
-- HYPOTHÈSE : l'octet 1 indique un type de contenu (le type 6 est presque toujours un conteneur), mais son sens exact n'est pas documenté ;
-- pour les fichiers stockés, le champ de l'offset 8 n'est pas toujours nul (34 cas) : sens inconnu ;
-- le sens des octets 12 à 31 quand ils ne sont pas nuls.
+Inconnues : le sens exact de l'octet 1 ; pour les fichiers stockés, le champ de l'offset 8 n'est pas toujours nul ; le sens des octets 12 à 31 quand ils ne sont pas nuls.
 
 ## Conteneur : structure vérifiée
 
-Après décompression, 876 des 881 fichiers de type 6 sont des conteneurs :
+Après décompression, la plupart des fichiers de type 6 sont des conteneurs :
 
 | Offset | Type | Champ |
 | --- | --- | --- |
@@ -75,63 +72,55 @@ Après décompression, 876 des 881 fichiers de type 6 sont des conteneurs :
 | 4 | u32 | position de la table : toujours 8 |
 | 8 | *n* × u32 | position de chaque sous-fichier, croissante |
 
-Un sous-fichier finit là où commence le suivant, le dernier à la fin des données. Les positions sont alignées sur 16 octets. Un sous-fichier peut être lui-même compressé (même en-tête de 32 octets) ou un autre conteneur.
+Un sous-fichier finit là où commence le suivant, le dernier à la fin des données. Les positions sont alignées sur 16 octets. Un sous-fichier peut être lui-même compressé (même en-tête de 32 octets) ou un autre conteneur. `0_text.afs` contient 7703 conteneurs.
 
 ## Contenus reconnus
 
-| Signature | Contenu | Certitude |
+| Signature | Contenu | Nombre (`0_text.afs`) |
 | --- | --- | --- |
-| `80 00`, puis la position (big-endian) des données audio, précédée de `(c)CRI` | son ADX (CRI) | vérifié : 536 dans `0_sound.afs`, 34 dans `0_text.afs` |
-| `RIFF` … `WAVE` | son WAV | vérifié (15) |
-| `WEPLDATA` | base des joueurs | 1 fichier (n° 66) ; structure non lue |
-| `20 05 04 20` | modèle 3D | HYPOTHÈSE (voir ci-dessous) |
-| `94 72 85 29` | texture | HYPOTHÈSE (voir ci-dessous) |
+| `20 05 04 20` | modèle 3D (voir [pes-model.md](pes-model.md)) | 9622 sous-fichiers et 25 fichiers |
+| `94 72 85 29` | texture (voir [pes-texture.md](pes-texture.md)) | 8289 sous-fichiers et 49 fichiers |
+| `80 00`, puis la position (big-endian) des données audio, précédée de `(c)CRI` | son ADX (CRI) | 34 (plus 536 dans `0_sound.afs` et 13 127 dans `f_sound.afs`) |
+| `RIFF` … `WAVE` | son WAV | 15 |
+| `WEPLDATA` | base des joueurs | 1 (structure non lue) |
 
-HYPOTHÈSE modèles et textures, fondée sur la carte communautaire :
+La forme de la signature des modèles fait penser à une date (2005-04-20), comme celle de plusieurs formats encore inconnus.
 
-- chaque fichier des plages « visages » et « coiffures » est un conteneur de **deux modèles et une texture** (par exemple n° 1943 : 38 192 et 4560 octets pour les modèles, 11 392 pour la texture) ;
-- les plages « maillots », « numéros et polices » et « palettes » ne contiennent que des textures ;
-- **les en-têtes de texture décrivent des images** (test `texture_headers_give_sizes_and_their_logarithms`, sur les 1890 textures de la démo) : largeur et hauteur en u16 aux offsets 20 et 22, puis leurs logarithmes en base 2 arrondis au-dessus aux octets 26 et 27 (256 × 256 : 8 et 8 ; 64 × 48 : 6 et 6). 11 textures ont des dimensions nulles (palettes seules ?). La taille tombe juste pour les plus fréquentes : 66 688 = 128 (en-tête) + 256 × 256 (un octet par pixel) + 1024 (palette de 256 couleurs) ;
-- l'octet 24 vaut 2, 4 ou 8 (sens inconnu, peut-être la profondeur des pixels).
+Encore inconnus (signature : nombre de sous-fichiers dans `0_text.afs`), à reprendre aux jalons J5 et J6 :
 
-Leur structure interne sera lue au jalon J5 ; c'est l'affichage d'un modèle qui validera ces hypothèses.
-
-Encore inconnus, avec les indices relevés (à reprendre aux jalons J5 et J6) :
-
-| Signature | Nombre (`0_text.afs`) | Indices |
+| Signature | Nombre | Indices |
 | --- | --- | --- |
-| `07 12 01 20` | 923 sous-fichiers | Par séries de 2 à 54 dans des conteneurs dont le premier sous-fichier est une petite table commençant par leur nombre. Contiennent des demi-flottants valant 1,0 (`00 3c`) et des flottants comme 450,0 ou 600,0. HYPOTHÈSE à tester en J6 : des animations. Signature en forme de date, comme celle des modèles (`20 05 04 20`). |
-| premier octet `1a`, `1b`, `5a`, `5b`, `9a`, `9b`, `db`... | environ 1500 sous-fichiers | Par séries de 2 à 34 dans des conteneurs (n° 74 à 90, 235 à 262, 319 à 378, 457 à 478, 618 à 641). En-tête d'environ 28 octets, puis de longues suites d'entiers de 16 bits qui varient doucement. Structure pas assez régulière pour conclure. |
-| `18 39 84 29` | 264 sous-fichiers | Petites tables de positions (nombre à l'offset 8). La même signature apparaît à l'intérieur des fichiers `9a`. |
-| `19 11 01 20` | 64 sous-fichiers | Encore une signature en forme de date ; non étudiée. |
-| `aPDT` | 22 fichiers | Non compressés, tailles multiples de 2048. |
-| `10 00 00 00` (type 14) | 83 fichiers | Non étudiés. |
-| `e_text.afs` | 88 fichiers | Petites tables commençant par un petit entier ; sans doute des textes ou des réglages. |
-
-Les trois « PNG » (n° 644 à 646) ne font que 6 octets : des fichiers vidés de la démo.
+| `07 12 01 20` | 963 | par séries dans des conteneurs dont le premier sous-fichier est une petite table commençant par leur nombre ; demi-flottants valant 1,0 (`00 3c`) et flottants comme 450,0 ou 600,0. HYPOTHÈSE à tester en J6 : des animations |
+| `19 11 01 20` | 623 | signature en forme de date ; non étudiée |
+| premier octet `1a`, `1b`, `5a`, `9a`, `9b`... | plus de 1000 | en-tête d'environ 28 octets puis de longues suites d'entiers de 16 bits qui varient doucement ; structure pas assez régulière pour conclure |
+| petits entiers (`14 00 00 00`, `0c 00 00 00`, `03 00 00 00`, `06 00 00 00`...) | plusieurs milliers | petites tables ; non étudiées |
+| `18 39 84 29` | 264 | petites tables de positions (nombre à l'offset 8) |
+| `57 45 39 00`, `57 45 38 49` (« WE9 », « WE8I ») | 6 fichiers | en-têtes au nom de Winning Eleven, la version japonaise ; non étudiés |
+| `aPDT` | 22 fichiers | non compressés, tailles multiples de 2048 |
+| `10 00 00 00` (type 14) | 433 fichiers | non étudiés |
 
 ## Carte de `0_text.afs`
 
-Numéros à partir de 0, tirés de la carte communautaire (`asset_bridge::pes6::section`). HYPOTHÈSE : établie sur le jeu complet. Vérifiée sur la démo pour les visages, coiffures, maillots, numéros et palettes, dont le contenu a la signature attendue (test `text_archive_contents_match_the_community_map`). **Approximative autour des sons** : la plage « sons » commence par 8 sons WAV (n° 6872 à 6879) et contient 7 fichiers inconnus (6882 à 6888), et les sons ADX continuent dans les plages « foule » et « panneaux publicitaires », jusqu'au n° 6920. Les autres plages sont vides ou presque dans la démo.
+Numéros à partir de 0, tirés de la carte communautaire (`asset_bridge::pes6::section`). **Vérifiée sur le jeu complet** : chaque plage a le contenu attendu (test `text_archive_contents_match_the_community_map`).
 
-| Numéros | Section | Fichiers dans la démo |
+| Numéros | Section | Contenu constaté |
 | --- | --- | --- |
-| 0 – 48 | ballons | 3 |
-| 431 – 446 | arbitres | 16 |
-| 535 – 536 | drapeaux et emblèmes | 0 |
-| 1891 – 2937 | visages | 102 |
-| 2938 – 3404 | visages (éditeur) | 142 |
-| 4448 – 4902, 4922 – 5316 | coiffures (éditeur) | 81 |
-| 5322 – 5338 | chaussures | 5 |
-| 5339 – 5443 | chaussures (éditeur) | 0 |
-| 5444 – 5455 | palettes | 4 |
-| 5456 – 5472 | numéros et polices | 8 |
-| 5473 – 6831 | maillots | 48, dont 16 illisibles |
-| 6872 – 6912 | sons (ADX, WAV et 7 inconnus) | 41 |
-| 6913 – 6914 | foule | 2 (des sons ADX) |
-| 6915 – 6939 | panneaux publicitaires | 25 (6 sons ADX, puis des textures) |
+| 0 – 48 | ballons | 24 modèles et 24 textures |
+| 431 – 446 | arbitres | 16 textures |
+| 535 – 536 | drapeaux et emblèmes | 2 fichiers non identifiés |
+| 1891 – 2937 | visages | 1047 conteneurs : 2 modèles (même tête en deux niveaux de détail) et une texture de visage |
+| 2938 – 3404 | visages (éditeur) | 464 conteneurs de textures |
+| 4448 – 4902, 4922 – 5316 | coiffures (éditeur) | 848 conteneurs : modèle et textures |
+| 5322 – 5338 | chaussures | 17 conteneurs de textures |
+| 5339 – 5443 | chaussures (éditeur) | 105 conteneurs de textures |
+| 5444 – 5455 | palettes | 12 conteneurs de textures |
+| 5456 – 5472 | numéros et polices | 17 conteneurs de textures |
+| 5473 – 6831 | maillots | 453 tenues × 3 fichiers : 906 conteneurs de textures lisibles, 453 grandes textures chiffrées |
+| 6872 – 6912 | sons | 34 sons ADX et 7 fichiers inconnus |
+| 6913 – 6914 | foule | 2 conteneurs de textures |
+| 6915 – 6939 | panneaux publicitaires | conteneurs de textures et de données |
 
-640 fichiers de la démo sont hors de ces plages.
+Hors carte, les fichiers n° 1193 à 1890 sont chiffrés, et de nombreux fichiers restent à situer (corps de joueurs vers les n° 1060, ensembles d'entraînement vers les n° 288 à 297...).
 
 ## Outil
 
@@ -140,11 +129,11 @@ cargo run -p asset-tools -- afs summary                    # toutes les archives
 cargo run -p asset-tools -- afs list 0_text --tree         # fichiers, sous-fichiers, sections
 cargo run -p asset-tools -- afs list 0_text --kind texture # filtre sur le contenu
 cargo run -p asset-tools -- afs extract 0_text 1943        # %LOCALAPPDATA%\chaos-fc\extracted\pes6\0_text\
-cargo run -p asset-tools -- afs extract 0_text --all       # toute l'archive (7601 fichiers sur la démo)
+cargo run -p asset-tools -- afs extract 0_text --all       # toute l'archive (38 285 fichiers)
 ```
 
-L'extraction écrit le fichier décompressé et chacun de ses sous-fichiers (`0_text_01943.bin`, `0_text_01943_0.mdl`, `_1.mdl`, `_2.tex`). Les extensions `.mdl` et `.tex` sont choisies par Chaos FC : le jeu n'a pas de noms. Elles sont bloquées par le `.gitignore` et la CI, comme `.adx`.
+L'extraction écrit le fichier décompressé et chacun de ses sous-fichiers (`0_text_01943.bin`, `0_text_01943_0.mdl`, `_1.mdl`, `_2.tex`). Les extensions `.mdl` et `.tex` sont choisies par Chaos FC : le jeu n'a pas de noms lisibles. Elles sont bloquées par le `.gitignore` et la CI, comme `.adx`.
 
 ## Fichiers testés
 
-`crates/asset-bridge/tests/pes6_files.rs` (ignoré si PES 6 n'est pas configuré) : toutes les archives du dossier `dat` s'ouvrent, `0_sound.afs` ne contient que des sons ADX, au moins 98 % des fichiers de `0_text.afs` se décompressent, le contenu des sections vérifiées correspond à la carte, et chaque en-tête de texture donne des dimensions cohérentes avec leurs logarithmes.
+`crates/asset-bridge/tests/pes6_files.rs` (ignoré si PES 6 n'est pas configuré) : toutes les archives du dossier `dat` s'ouvrent, `0_sound.afs` ne contient que des sons ADX, les fichiers illisibles de `0_text.afs` sont tous dans les zones chiffrées connues, le contenu des sections correspond à la carte, et chaque en-tête de texture donne des dimensions cohérentes.

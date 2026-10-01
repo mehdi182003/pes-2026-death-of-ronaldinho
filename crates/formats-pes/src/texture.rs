@@ -1,7 +1,7 @@
 //! PES 6 textures (signature `94 72 85 29`): a 128-byte header, a palette,
 //! then 8-bit or 4-bit palette indices, laid out as on the PlayStation 2.
 //!
-//! Layout checked on the 1890 textures of the PES 6 PC demo, see
+//! Layout checked on the textures of the full PES 6 PC game, see
 //! `docs/formats/pes-texture.md`.
 
 use crate::content::TEXTURE_MAGIC;
@@ -44,7 +44,8 @@ pub struct TextureHeader {
     pub palette_offset: usize,
     /// Position of the pixels in the file.
     pub pixel_offset: usize,
-    /// Size given by the header; files of the demo have exactly this size.
+    /// Size given by the header: the file's size, give or take the padding
+    /// of sub-files.
     pub file_size: usize,
 }
 
@@ -135,7 +136,7 @@ pub struct DecodedTexture {
 /// the second and third blocks of every 32 are swapped (bits 3 and 4 of the
 /// index exchanged).
 // HYPOTHÈSE: checked by eye on a face texture, and the reordered palettes
-// of the demo have smoother gradients than the stored order.
+// of the game have smoother gradients than the stored order.
 fn stored_palette_index(index: usize) -> usize {
     (index & !0x18) | ((index & 0x08) << 1) | ((index & 0x10) >> 1)
 }
@@ -170,7 +171,7 @@ pub fn decode(bytes: &[u8]) -> Result<DecodedTexture, TextureError> {
     let stored = &bytes[header.palette_offset..palette_end];
     // HYPOTHÈSE: alpha follows the PlayStation 2 convention (0x80 = opaque)
     // when no colour of the palette goes above 0x80, which is the case for
-    // 1479 of the palettes of the demo; the others use the full range.
+    // 7550 of the 7552 palettes of the game; the others use the full range.
     let half_range = stored
         .as_chunks::<4>()
         .0
