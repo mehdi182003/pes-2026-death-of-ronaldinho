@@ -6,7 +6,7 @@
 //! cargo run -p asset-tools --bin viewer -- player
 //! cargo run -p asset-tools --bin viewer -- player --anim run_player
 //! cargo run -p asset-tools --bin viewer -- --textures D:\ViceCity\txd\LOADSC0.TXD
-//! cargo run -p asset-tools --bin viewer -- player --pes 0_text:431 --pes-texture 0_text:432
+//! cargo run -p asset-tools --bin viewer -- player --pes 0_text:1064 --pes-texture 0_text:296/1/0 --pes-head 0_text:1943
 //! ```
 
 use std::f32::consts::FRAC_PI_2;
@@ -46,6 +46,11 @@ struct Args {
     /// Texture du modèle de PES 6 (par exemple 0_text:432).
     #[arg(long, requires = "pes")]
     pes_texture: Option<PesFile>,
+
+    /// Tête à placer sur le modèle de PES 6 : ses modèles et sa texture
+    /// (par exemple 0_text:1943).
+    #[arg(long, requires = "pes")]
+    pes_head: Option<PesFile>,
 
     /// Dictionnaire de textures du modèle (par défaut : celui du même nom).
     #[arg(long)]
@@ -123,7 +128,12 @@ fn load(args: &Args) -> Result<ViewerScene> {
     }
 
     let pes_scene = match &args.pes {
-        Some(file) => Some(load_pes(&config_file, file, args.pes_texture.as_ref())?),
+        Some(file) => Some(load_pes(
+            &config_file,
+            file,
+            args.pes_texture.as_ref(),
+            args.pes_head.as_ref(),
+        )?),
         None => None,
     };
     let Some(name) = args.model.as_deref() else {
@@ -162,19 +172,16 @@ fn load(args: &Args) -> Result<ViewerScene> {
     Ok(ViewerScene::new(model, textures, false, note, animation))
 }
 
-/// A PES 6 model and its texture, the model scaled to metres.
+/// A PES 6 model, its texture and its head, the model scaled to metres.
 fn load_pes(
     config_file: &std::path::Path,
     file: &PesFile,
     texture: Option<&PesFile>,
+    head: Option<&PesFile>,
 ) -> Result<(Model, Vec<Texture>)> {
     let pes6 = config::read_paths(config_file)?.check(Game::Pes6)?;
     let pes = Pes6::open(&pes6)?;
-    let textures = match texture {
-        Some(texture) => vec![pes.load_texture(texture)?],
-        None => Vec::new(),
-    };
-    let mut model = pes.load_model(file, textures.first().map(|t| t.name.as_str()))?;
+    let (mut model, textures) = pes.load_player(file, texture, head)?;
     // PES models are Y-up like the viewer; only the units change.
     let scale = Mat4::from_scale(Vec3::splat(1.0 / retarget::PES6_UNITS_PER_METRE));
     model.nodes[0].local = (scale * Mat4::from_cols_array(&model.nodes[0].local)).to_cols_array();

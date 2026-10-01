@@ -265,3 +265,38 @@ fn referee_loads_textured_at_a_plausible_size() {
     assert!(outside * 10 < uvs.len(), "{outside} / {}", uvs.len());
     assert!(uvs.iter().flatten().all(|c| c.abs() < 4.0));
 }
+
+#[test]
+fn player_body_gets_its_head_on_the_shoulders() {
+    let Some(dir) = game_dir(Game::Pes6) else {
+        return;
+    };
+    let pes = Pes6::open(&dir).unwrap();
+    let file = |text: &str| text.parse().unwrap();
+    let (model, textures) = pes
+        .load_player(
+            &file("0_text:1064"),
+            Some(&file("0_text:296/1/0")),
+            Some(&file("0_text:1943")),
+        )
+        .unwrap();
+    assert_eq!(textures.len(), 2, "tenue et visage");
+    let head = model.nodes.iter().position(|n| n.name == "tête").unwrap();
+    let m = model.nodes[head].local;
+    let heights: Vec<f32> = model
+        .meshes
+        .iter()
+        .filter(|mesh| mesh.node == head)
+        .flat_map(|mesh| &mesh.positions)
+        .map(|p| m[1] * p[0] + m[5] * p[1] + m[9] * p[2] + m[13])
+        .collect();
+    assert!(!heights.is_empty());
+    let (low, high) = heights
+        .iter()
+        .fold((f32::MAX, f32::MIN), |(lo, hi), &y| (lo.min(y), hi.max(y)));
+    // The body stops at the neck (673.8 units).
+    assert!(
+        low > 580.0 && high < 800.0 && high > 700.0,
+        "{low} .. {high}"
+    );
+}

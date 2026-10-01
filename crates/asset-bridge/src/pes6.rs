@@ -136,6 +136,74 @@ impl Pes6 {
         })
     }
 
+    /// A character assembled from a body and, optionally, a head: the
+    /// first model of `body` with `body_texture` on every slot, and every
+    /// model of `head` with the first texture of `head`, placed on the
+    /// body's head bone. Returns the model and its textures.
+    pub fn load_player(
+        &self,
+        body: &PesFile,
+        body_texture: Option<&PesFile>,
+        head: Option<&PesFile>,
+    ) -> Result<(Model, Vec<Texture>), Pes6Error> {
+        let mut textures = Vec::new();
+        if let Some(texture) = body_texture {
+            textures.push(self.load_texture(texture)?);
+        }
+        let (found, data) = self.first_of(body, Kind::Model)?;
+        let parsed = pes_model::parse(&data).map_err(|source| Pes6Error::Model {
+            file: found.clone(),
+            source,
+        })?;
+        let mut model = convert_model(
+            &found.to_string(),
+            &parsed,
+            textures.first().map(|t| t.name.as_str()),
+        );
+        let Some(head) = head else {
+            return Ok((model, textures));
+        };
+
+        // HYPOTHÈSE: the head bone is the one whose joint is highest (bone
+        // 16 of the 19-bone bodies, at 670.6 units). The head models are
+        // in its space.
+        let bone = parsed
+            .bones
+            .iter()
+            .max_by(|a, b| a.joint()[1].total_cmp(&b.joint()[1]))
+            .ok_or_else(|| Pes6Error::Missing(format!("{found} : pas de squelette")))?;
+        let face = self.load_texture(head).ok();
+        let face_name = face.as_ref().map(|t| t.name.clone());
+        textures.extend(face);
+        let node = model.nodes.len();
+        model.nodes.push(Node {
+            name: "tête".into(),
+            parent: Some(0),
+            local: bone.bind_matrix(),
+            bone_id: None,
+        });
+        for part in self.extract(head)? {
+            if part.kind != Kind::Model {
+                continue;
+            }
+            let file = PesFile {
+                path: part.path.clone(),
+                ..head.clone()
+            };
+            let parsed =
+                pes_model::parse(&part.data).map_err(|source| Pes6Error::Model { file, source })?;
+            let converted = convert_model("tête", &parsed, face_name.as_deref());
+            model.meshes.extend(
+                converted
+                    .meshes
+                    .into_iter()
+                    .map(|mesh| Mesh { node, ..mesh }),
+            );
+        }
+        model.name = format!("{} + {head}", model.name);
+        Ok((model, textures))
+    }
+
     fn first_of(&self, file: &PesFile, kind: Kind) -> Result<(PesFile, Vec<u8>), Pes6Error> {
         let label = kind.label();
         let found = self
@@ -392,6 +460,7 @@ mod tests {
                     triangles: vec![triangle],
                 })
                 .collect(),
+            bones: Vec::new(),
         };
         let converted = convert_model("test", &model, Some("tex"));
         let mesh = &converted.meshes[0];
