@@ -6,3 +6,6 @@
 //! in `docs/formats/`, with the fields that were checked on real files.
 
 pub mod img;
+pub mod rw;
+
+mod text;

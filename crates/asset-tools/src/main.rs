@@ -6,7 +6,8 @@ use std::process::ExitCode;
 use anyhow::{Context, Result};
 use asset_bridge::cache;
 use asset_bridge::config::{self, Game};
-use asset_tools::source;
+use asset_tools::dump;
+use asset_tools::source::{self, Source};
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
@@ -32,6 +33,24 @@ enum Command {
     /// Archive models/gta3.img de Vice City.
     #[command(subcommand)]
     Img(ImgCommand),
+
+    /// Dump hexadécimal annoté : arbre des chunks pour un fichier RenderWare (DFF, TXD).
+    Dump {
+        /// Fichier à lire, ou vc:<nom> pour une entrée de models/gta3.img (ex. vc:player.dff).
+        source: Source,
+
+        /// Dump hexadécimal brut, sans analyse RenderWare.
+        #[arg(long)]
+        raw: bool,
+
+        /// Octets affichés par chunk de données, ou au total en mode brut (0 : tout).
+        #[arg(long, default_value_t = 64)]
+        bytes: usize,
+
+        /// Mode brut : offset du premier octet affiché.
+        #[arg(long, default_value_t = 0)]
+        offset: usize,
+    },
 }
 
 #[derive(Subcommand)]
@@ -64,6 +83,12 @@ fn main() -> ExitCode {
         Command::Img(ImgCommand::Extract { names, out }) => {
             img_extract(&config_file, &names, out.as_deref())
         }
+        Command::Dump {
+            source,
+            raw,
+            bytes,
+            offset,
+        } => dump_source(&config_file, &source, raw, bytes, offset),
     };
     match result {
         Ok(code) => code,
@@ -141,5 +166,33 @@ fn img_extract(config_file: &Path, names: &[String], out: Option<&Path>) -> Resu
         std::fs::write(&path, data).with_context(|| format!("écriture de {}", path.display()))?;
         println!("{}", path.display());
     }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn dump_source(
+    config_file: &Path,
+    source: &Source,
+    raw: bool,
+    max_bytes: usize,
+    offset: usize,
+) -> Result<ExitCode> {
+    let data = source.read(config_file)?;
+    println!("{} ({} octets)", source.label(), data.len());
+    if !raw && dump::looks_like_renderware(&data) {
+        match dump::renderware_tree(&data, max_bytes) {
+            Ok(tree) => {
+                print!("{tree}");
+                return Ok(ExitCode::SUCCESS);
+            }
+            Err(err) => eprintln!("Analyse RenderWare impossible ({err}) : dump brut."),
+        }
+    }
+    let start = offset.min(data.len());
+    let end = if max_bytes == 0 {
+        data.len()
+    } else {
+        (start + max_bytes).min(data.len())
+    };
+    print!("{}", dump::hex(&data[start..end], start, ""));
     Ok(ExitCode::SUCCESS)
 }

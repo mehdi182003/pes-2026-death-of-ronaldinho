@@ -10,6 +10,8 @@ use std::path::{Path, PathBuf};
 
 use binrw::BinRead;
 
+use crate::text::latin1_until_nul;
+
 /// Size of a sector, the unit of offsets and sizes in the directory.
 pub const SECTOR_SIZE: u64 = 2048;
 
@@ -90,13 +92,6 @@ pub fn parse_dir(bytes: &[u8]) -> Result<Vec<DirEntry>, ImgError> {
         });
     }
     Ok(entries)
-}
-
-/// Decodes bytes up to the first NUL. Archive names are ASCII in practice;
-/// Latin-1 decoding never fails and keeps any other byte visible.
-pub(crate) fn latin1_until_nul(bytes: &[u8]) -> String {
-    let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
-    bytes[..end].iter().map(|&b| char::from(b)).collect()
 }
 
 /// An open IMG archive: its directory, and the data file read on demand.
