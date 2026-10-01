@@ -8,6 +8,7 @@ use asset_bridge::config::Game;
 use asset_bridge::pes6::{self, Pes6};
 use asset_bridge::testing::game_dir;
 use formats_pes::content::{self, Kind, Packing, Report};
+use formats_pes::model::{self, ModelError};
 use formats_pes::texture::{self, TextureError};
 
 /// Every non-empty file of `archive`, with its index and report.
@@ -185,4 +186,45 @@ fn every_texture_decodes_or_is_reported() {
     // Demo: 1184 decoded, 706 set aside (mostly colour variants).
     eprintln!("textures : {decoded} décodées, {set_aside} mises de côté");
     assert!(decoded > set_aside, "{decoded} / {set_aside}");
+}
+
+#[test]
+fn models_parse_with_consistent_draws() {
+    let Some(dir) = game_dir(Game::Pes6) else {
+        return;
+    };
+    let pes = Pes6::open(&dir).unwrap();
+    let mut afs = pes.open_archive("0_text.afs").unwrap();
+    let entries: Vec<_> = afs
+        .entries()
+        .iter()
+        .filter(|e| !e.is_empty())
+        .copied()
+        .collect();
+    let (mut read, mut unknown_opcodes) = (0, 0);
+    for entry in &entries {
+        for file in content::extract(&afs.read(entry).unwrap()) {
+            if file.kind != Kind::Model {
+                continue;
+            }
+            // parse() checks that every draw stays within its vertices and
+            // gives the announced number of triangles.
+            match model::parse(&file.data) {
+                Ok(parsed) => {
+                    assert!(
+                        !parsed.draws.is_empty(),
+                        "n° {} {:?}",
+                        entry.index,
+                        file.path
+                    );
+                    read += 1;
+                }
+                Err(ModelError::UnknownOpcode { .. }) => unknown_opcodes += 1,
+                Err(err) => panic!("n° {} {:?} : {err}", entry.index, file.path),
+            }
+        }
+    }
+    // Demo: 751 read, 11 with an opcode not understood yet (08, 11).
+    eprintln!("modèles : {read} lus, {unknown_opcodes} avec une instruction inconnue");
+    assert!(unknown_opcodes * 50 < read, "{read} / {unknown_opcodes}");
 }
