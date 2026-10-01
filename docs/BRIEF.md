@@ -177,6 +177,13 @@ Références : le wiki GTAMods (pages RenderWare, DFF, TXD, IFP, IMG), librw et 
 - Les signatures `20 05 04 20` (modèles) et `94 72 85 29` (textures) restent des hypothèses jusqu'à l'affichage d'un modèle au jalon J5. Les contenus non reconnus sont listés avec leurs premiers octets, jamais devinés.
 - Les tests sur les fichiers de PES vérifient des propriétés (contenus des sections, taux de fichiers lisibles), pas les nombres exacts de la démo, pour rester valables sur le jeu complet.
 
+**Reste à faire (J4)** : le jalon a été validé sur la démo de PES 6 sans que tout soit identifié. À reprendre :
+
+- **Formats inconnus** (détails dans `docs/formats/afs.md`) : `07 12 01 20` (923 sous-fichiers, peut-être des animations : à tester en J6), la famille `1a`/`9a`... (environ 1500 sous-fichiers), `18 39 84 29` (264), `19 11 01 20` (64), `aPDT` (22), le type 14 (`10 00 00 00`, 83) et les 88 fichiers de `e_text.afs`.
+- **Hypothèses à confirmer** : `20 05 04 20` = modèle (par l'affichage en J5) et `94 72 85 29` = texture (en-tête cohérent ; pixels à décoder en J5).
+- **16 maillots illisibles** (n° 5481 à 5562 de `0_text.afs`) : pas du zlib, contenu d'aspect chiffré. Un fichier (n° 7051) ne se décompresse pas.
+- **Jeu complet** : tout a été vérifié sur la démo seulement. Sur une copie complète de PES 6, relancer `afs summary` et les tests de `crates/asset-bridge/tests/pes6_files.rs`, et compléter la carte de `0_text.afs`.
+
 **Plan de repli pour les animations PES :** si elles restent illisibles après un effort raisonnable, utiliser des animations libres de droits (par exemple Mixamo) retargetées sur le squelette PES. Le jalon correspondant ne doit pas bloquer tout le projet.
 
 ## Méthode de reverse engineering
@@ -238,7 +245,7 @@ On valide d'abord que les assets des deux jeux sont lisibles (J1 à J5), avant d
 | J1 | Lecture IMG/DIR et DFF de Vice City | Tommy s'affiche en T-pose, géométrie correcte, dans le visualiseur. **Validé le 1er octobre 2026** (Tommy et le Colt 45 vérifiés par Mokhmad). |
 | J2 | TXD + IFP | Tommy texturé joue son animation de course en boucle. **Validé le 1er octobre 2026** (Tommy texturé court en boucle, vérifié par Mokhmad). |
 | J3 | Armes Vice City | Tommy tient une arme, tire dans une scène vide, avec le son d'origine. **Validé le 1er octobre 2026** (Colt 45, Uzi et Ruger : prise en main, visée, rythme et sons vérifiés par Mokhmad). |
-| J4 | Lecture AFS et décompression PES 6 | Liste complète des fichiers internes extraits et identifiés. |
+| J4 | Lecture AFS et décompression PES 6 | Liste complète des fichiers internes extraits et identifiés. **Validé le 1er octobre 2026 par Mehdi, avec réserves** (sur la démo de PES 6 ; voir « Reste à faire (J4) »). |
 | J5 | Modèle joueur PES 6 | Un joueur PES texturé s'affiche à côté de Tommy, à la bonne échelle. |
 | J6 | Squelettes et retargeting | Une même animation joue correctement sur Tommy et sur un joueur PES. |
 | J7 | Foot minimal | Terrain, ballon physique, un joueur contrôlé, buts qui comptent. |
