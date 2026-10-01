@@ -1,0 +1,16 @@
+# Configuration de Chaos FC
+#
+# Copiez ce fichier en `config.toml` (à la racine du projet) puis indiquez les
+# dossiers d'installation de VOS copies des jeux. Chaos FC lit leurs fichiers
+# directement ; rien n'est copié dans le dépôt.
+#
+# Utilisez des guillemets simples ('...') : les antislashs Windows sont alors
+# pris tels quels. Un chemin relatif part du dossier de ce fichier.
+# Pour utiliser un autre fichier : variable d'environnement CHAOS_FC_CONFIG.
+
+[paths]
+# Dossier qui contient models\gta3.img et models\gta3.dir
+vice_city = 'C:\Program Files (x86)\Rockstar Games\Grand Theft Auto Vice City'
+
+# Dossier qui contient le sous-dossier dat\ et ses archives .afs
+pes6 = 'C:\Program Files (x86)\KONAMI\Pro Evolution Soccer 6'
