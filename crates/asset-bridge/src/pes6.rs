@@ -74,9 +74,10 @@ impl Pes6 {
 /// map published by the PES 6 modding community ("MAP 0_text.afs PES6",
 /// obipes6.blogspot.com). Indices start at 0.
 // HYPOTHÈSE: drawn up on the full game. Checked on the demo for the faces,
-// hairstyles, kits, numbers, palettes and ADX slots (their contents have
-// the expected signatures, see docs/formats/afs.md); the others are empty
-// or nearly empty in the demo.
+// hairstyles, kits, numbers and palettes (their contents have the expected
+// signatures, see docs/formats/afs.md). Approximate around the sounds: the
+// "sons" slots also hold WAV sounds and unknown files, and the ADX sounds
+// go on into the crowd and advertising slots (up to 6920).
 const TEXT_MAP: &[(usize, usize, &str)] = &[
     (0, 48, "ballons"),
     (431, 446, "arbitres"),
@@ -90,7 +91,7 @@ const TEXT_MAP: &[(usize, usize, &str)] = &[
     (5444, 5455, "palettes"),
     (5456, 5472, "numéros et polices"),
     (5473, 6831, "maillots"),
-    (6872, 6912, "sons ADX"),
+    (6872, 6912, "sons"),
     (6913, 6914, "foule"),
     (6915, 6939, "panneaux publicitaires"),
 ];

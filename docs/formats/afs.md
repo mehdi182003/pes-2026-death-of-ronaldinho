@@ -99,7 +99,7 @@ Encore inconnus (signature : nombre dans `0_text.afs`) : `07 12 01 20` (923 sous
 
 ## Carte de `0_text.afs`
 
-Numéros à partir de 0, tirés de la carte communautaire (`asset_bridge::pes6::section`). HYPOTHÈSE : établie sur le jeu complet. Vérifiée sur la démo pour les visages, coiffures, maillots, numéros, palettes et sons ADX, dont le contenu a la signature attendue (test `text_archive_contents_match_the_community_map`). Les autres plages sont vides ou presque dans la démo.
+Numéros à partir de 0, tirés de la carte communautaire (`asset_bridge::pes6::section`). HYPOTHÈSE : établie sur le jeu complet. Vérifiée sur la démo pour les visages, coiffures, maillots, numéros et palettes, dont le contenu a la signature attendue (test `text_archive_contents_match_the_community_map`). **Approximative autour des sons** : la plage « sons » commence par 8 sons WAV (n° 6872 à 6879) et contient 7 fichiers inconnus (6882 à 6888), et les sons ADX continuent dans les plages « foule » et « panneaux publicitaires », jusqu'au n° 6920. Les autres plages sont vides ou presque dans la démo.
 
 | Numéros | Section | Fichiers dans la démo |
 | --- | --- | --- |
@@ -114,9 +114,9 @@ Numéros à partir de 0, tirés de la carte communautaire (`asset_bridge::pes6::
 | 5444 – 5455 | palettes | 4 |
 | 5456 – 5472 | numéros et polices | 8 |
 | 5473 – 6831 | maillots | 48, dont 16 illisibles |
-| 6872 – 6912 | sons ADX | 41 |
-| 6913 – 6914 | foule | 2 |
-| 6915 – 6939 | panneaux publicitaires | 25 |
+| 6872 – 6912 | sons (ADX, WAV et 7 inconnus) | 41 |
+| 6913 – 6914 | foule | 2 (des sons ADX) |
+| 6915 – 6939 | panneaux publicitaires | 25 (6 sons ADX, puis des textures) |
 
 640 fichiers de la démo sont hors de ces plages.
 

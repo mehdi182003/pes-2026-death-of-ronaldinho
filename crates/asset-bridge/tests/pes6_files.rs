@@ -100,5 +100,5 @@ fn text_archive_contents_match_the_community_map() {
         assert!(kinds.contains(&Kind::Texture), "{section} : {kinds:?}");
         assert!(!kinds.contains(&Kind::Model), "{section} : {kinds:?}");
     }
-    assert!(kinds_in("sons ADX").contains(&Kind::Adx));
+    assert!(kinds_in("sons").contains(&Kind::Adx));
 }
