@@ -8,6 +8,7 @@ use asset_bridge::config::Game;
 use asset_bridge::pes6::{self, Pes6};
 use asset_bridge::testing::game_dir;
 use formats_pes::content::{self, Kind, Packing, Report};
+use formats_pes::texture::{self, TextureError};
 
 /// Every non-empty file of `archive`, with its index and report.
 fn inspect_all(pes: &Pes6, archive: &str) -> Vec<(usize, Report)> {
@@ -143,4 +144,45 @@ fn texture_headers_give_sizes_and_their_logarithms() {
         }
     }
     assert!(checked > 0);
+}
+
+#[test]
+fn every_texture_decodes_or_is_reported() {
+    let Some(dir) = game_dir(Game::Pes6) else {
+        return;
+    };
+    let pes = Pes6::open(&dir).unwrap();
+    let mut afs = pes.open_archive("0_text.afs").unwrap();
+    let entries: Vec<_> = afs
+        .entries()
+        .iter()
+        .filter(|e| !e.is_empty())
+        .copied()
+        .collect();
+    let (mut decoded, mut set_aside) = (0, 0);
+    for entry in &entries {
+        for file in content::extract(&afs.read(entry).unwrap()) {
+            if file.kind != Kind::Texture {
+                continue;
+            }
+            match texture::decode(&file.data) {
+                Ok(image) => {
+                    assert_eq!(image.rgba8.len(), 4 * (image.width * image.height) as usize);
+                    decoded += 1;
+                }
+                Err(
+                    TextureError::PaletteOnly
+                    | TextureError::ExternalPalette
+                    | TextureError::Swizzled { .. },
+                ) => set_aside += 1,
+                Err(err) => panic!("n° {} {:?} : {err}", entry.index, file.path),
+            }
+        }
+    }
+    // Palettes alone (dimensions of zero, or colour variants that stop
+    // before their pixels), textures whose palette is elsewhere and
+    // swizzled textures are set aside.
+    // Demo: 1184 decoded, 706 set aside (mostly colour variants).
+    eprintln!("textures : {decoded} décodées, {set_aside} mises de côté");
+    assert!(decoded > set_aside, "{decoded} / {set_aside}");
 }
