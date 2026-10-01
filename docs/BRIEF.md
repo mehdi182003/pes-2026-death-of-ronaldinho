@@ -184,6 +184,15 @@ Références : le wiki GTAMods (pages RenderWare, DFF, TXD, IFP, IMG), librw et 
 - **16 maillots illisibles** (n° 5481 à 5562 de `0_text.afs`) : pas du zlib, contenu d'aspect chiffré. Un fichier (n° 7051) ne se décompresse pas.
 - **Jeu complet** : tout a été vérifié sur la démo seulement. Sur une copie complète de PES 6, relancer `afs summary` et les tests de `crates/asset-bridge/tests/pes6_files.rs`, et compléter la carte de `0_text.afs`.
 
+**Constats (J5)**, détaillés dans `docs/formats/pes-texture.md` et `docs/formats/pes-model.md` : les textures gardent les formats de la PlayStation 2 (palette de 256 couleurs réordonnée, ou 16 couleurs). Les modèles sont faits de parties de sommets (jusqu'à 4 os par sommet : prêts pour le skinning), d'une bande de triangles et d'un petit programme de dessin qui choisit partie, texture et os. Les corps de joueurs (n° 1064...) n'ont pas de texture lisible dans la démo, leurs maillots étant chiffrés : le jalon s'appuie sur **l'arbitre** (n° 431, texture n° 432), personnage complet et texturé.
+
+**Décisions (J5) :**
+
+- `formats-pes` : modules `texture` (décodage en RGBA) et `model` (parties, bande, programme de dessin, avec vérifications). `asset-bridge::pes6` les convertit vers les types neutres ; un fichier se désigne par `PesFile` (`0_text:431`, `0_text:1943/2`).
+- Les modèles neutres restent en unités PES ; la mise à l'échelle est dans `retarget::PES6_UNITS_PER_METRE` (420, HYPOTHÈSE : l'arbitre mesure 1,80 m). PES 6 est déjà Y vers le haut.
+- Pour l'instant une seule texture pour tous les emplacements d'un modèle (suffisant pour l'arbitre) ; un joueur demandera une texture par emplacement (maillot, peau, chaussures...).
+- Le visualiseur affiche un modèle PES seul ou à côté d'un modèle de Vice City (`--pes`, `--pes-texture`), pieds à la même hauteur.
+
 **Plan de repli pour les animations PES :** si elles restent illisibles après un effort raisonnable, utiliser des animations libres de droits (par exemple Mixamo) retargetées sur le squelette PES. Le jalon correspondant ne doit pas bloquer tout le projet.
 
 ## Méthode de reverse engineering
