@@ -145,9 +145,15 @@ impl<'w, 's> ModelSpawner<'w, 's> {
     }
 
     /// Spawns `model` in its bind pose under a new root entity, which holds
-    /// a [`SpawnedModel`]. Materials find their texture among `textures` by
-    /// name, ignoring case like the game.
-    pub fn spawn(&mut self, model: &Model, textures: &[Texture], options: SpawnOptions) -> Entity {
+    /// a [`SpawnedModel`] (also returned, to reach nodes right away).
+    /// Materials find their texture among `textures` by name, ignoring case
+    /// like the game.
+    pub fn spawn(
+        &mut self,
+        model: &Model,
+        textures: &[Texture],
+        options: SpawnOptions,
+    ) -> (Entity, SpawnedModel) {
         let images: HashMap<String, (Handle<Image>, bool)> = textures
             .iter()
             .map(|texture| {
@@ -261,12 +267,13 @@ impl<'w, 's> ModelSpawner<'w, 's> {
             }
         }
 
-        self.commands.entity(root).insert(SpawnedModel {
+        let spawned = SpawnedModel {
             nodes,
             node_names: model.nodes.iter().map(|node| node.name.clone()).collect(),
             bind_locals,
-        });
-        root
+        };
+        self.commands.entity(root).insert(spawned.clone());
+        (root, spawned)
     }
 }
 

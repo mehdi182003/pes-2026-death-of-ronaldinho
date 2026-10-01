@@ -117,6 +117,9 @@ La crate game n'importe jamais formats-rw ni formats-pes directement. Changer de
 - Nouvelle crate **`bevy-bridge`** (7ᵉ crate) : elle instancie dans Bevy les types neutres d'`asset-bridge` (modèles texturés et skinnés, calques d'animation, sons). Le visualiseur et le jeu la partagent ; `game` dépend d'`asset-bridge` et de `bevy-bridge`, jamais des crates de formats.
 - Les animations se superposent par **calques** : un calque n'anime que les os qu'il contient (par exemple `colt45_fire`, qui ne touche que le bras droit, par-dessus la pose de repos).
 - Les sons de la banque SFX sont joués via la feature `wav` de Bevy : chaque son est emballé en WAV en mémoire.
+- Les paramètres des armes viennent de `data/weapon.dat` (portée, boucle de tir, instant du coup, point de sortie), pas de constantes inventées. Le modèle et le numéro de son de chaque arme sont décrits dans `asset_bridge::vice_city` (`COLT45`, `UZI`, `M4`) en attendant la lecture des fichiers IDE.
+- Le jeu repère le monde en Y vers le haut (Bevy) ; les modèles de Vice City sont tournés par `retarget::VICE_CITY_TO_Y_UP`. L'arme est fixée telle quelle au nœud « R Hand » du personnage.
+- Le tir est un lancer de rayon le long du canon (+X de l'arme), contre le sol et des cibles en boîtes ; la physique (Rapier) arrivera avec le foot (J7).
 
 ```text
 chaos-fc/

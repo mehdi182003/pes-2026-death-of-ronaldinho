@@ -330,7 +330,7 @@ impl Orbit {
 
 fn setup(mut spawner: ModelSpawner, scene: Res<ViewerScene>, options: Res<Options>) {
     let root_transform = options.root_transform();
-    let root = spawner.spawn(
+    let (root, _) = spawner.spawn(
         &scene.model,
         &scene.textures,
         SpawnOptions {
