@@ -6,7 +6,7 @@
 use std::fmt;
 use std::io::Cursor;
 
-use binrw::BinRead;
+use binrw::{BinRead, Endian};
 
 /// Chunk type identifiers (GTAMods wiki, "List of RW section IDs"). Only the
 /// ones met in Vice City's files are listed.
@@ -317,6 +317,86 @@ fn kind_label(kind: &u32) -> String {
     }
 }
 
+/// Reads `T` at the start of the payload of `chunk`. Returns the value and
+/// the number of bytes consumed.
+pub(crate) fn parse_prefix<T: BinRead>(
+    chunk: &Chunk<'_>,
+    context: &'static str,
+    args: T::Args<'_>,
+) -> Result<(T, usize), RwError> {
+    let mut cursor = Cursor::new(chunk.data);
+    let value =
+        T::read_options(&mut cursor, Endian::Little, args).map_err(|source| RwError::Parse {
+            context,
+            offset: chunk.offset,
+            source,
+        })?;
+    Ok((value, cursor.position() as usize))
+}
+
+/// Reads `T` from the payload of `chunk` and checks that the whole payload
+/// was consumed: a leftover means the layout is not understood.
+pub(crate) fn parse_exact<T: BinRead>(
+    chunk: &Chunk<'_>,
+    context: &'static str,
+    args: T::Args<'_>,
+) -> Result<T, RwError> {
+    let (value, consumed) = parse_prefix(chunk, context, args)?;
+    if consumed != chunk.data.len() {
+        return Err(RwError::Invalid {
+            context,
+            offset: chunk.offset,
+            message: format!("{consumed} octets lus sur {}", chunk.data.len()),
+        });
+    }
+    Ok(value)
+}
+
+/// Rejects a count read from the file that cannot fit in the chunk (every
+/// element takes at least one byte). Protects against huge allocations when
+/// a file is corrupted or a field is misread.
+pub(crate) fn check_count(
+    chunk: &Chunk<'_>,
+    context: &'static str,
+    count: u32,
+) -> Result<(), RwError> {
+    if count as usize > chunk.data.len() {
+        return Err(RwError::Invalid {
+            context,
+            offset: chunk.offset,
+            message: format!(
+                "compteur {count} incompatible avec la taille du chunk ({} octets)",
+                chunk.data.len()
+            ),
+        });
+    }
+    Ok(())
+}
+
+/// Takes the next child of `parent` and checks its type.
+pub(crate) fn expect_child<'a>(
+    children: &mut Chunks<'a>,
+    parent: &Chunk<'_>,
+    kind: u32,
+    context: &'static str,
+) -> Result<Chunk<'a>, RwError> {
+    match children.next() {
+        None => Err(RwError::MissingChunk {
+            context,
+            offset: parent.offset,
+            expected: kind,
+        }),
+        Some(Err(err)) => Err(err),
+        Some(Ok(chunk)) if chunk.kind() == kind => Ok(chunk),
+        Some(Ok(chunk)) => Err(RwError::UnexpectedChunk {
+            context,
+            offset: chunk.offset,
+            expected: kind,
+            found: chunk.kind(),
+        }),
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod test_util {
     //! Builds synthetic RenderWare streams for tests. No game data.
@@ -337,6 +417,35 @@ pub(crate) mod test_util {
 
     pub fn container(kind: u32, library_id: u32, children: &[Vec<u8>]) -> Vec<u8> {
         chunk(kind, library_id, &children.concat())
+    }
+
+    /// Little-endian payload builder.
+    #[derive(Default)]
+    pub struct Payload(pub Vec<u8>);
+
+    impl Payload {
+        pub fn u16(mut self, value: u16) -> Self {
+            self.0.extend_from_slice(&value.to_le_bytes());
+            self
+        }
+        pub fn u32(mut self, value: u32) -> Self {
+            self.0.extend_from_slice(&value.to_le_bytes());
+            self
+        }
+        pub fn i32(mut self, value: i32) -> Self {
+            self.0.extend_from_slice(&value.to_le_bytes());
+            self
+        }
+        pub fn f32s(mut self, values: &[f32]) -> Self {
+            for value in values {
+                self.0.extend_from_slice(&value.to_le_bytes());
+            }
+            self
+        }
+        pub fn bytes(mut self, values: &[u8]) -> Self {
+            self.0.extend_from_slice(values);
+            self
+        }
     }
 }
 

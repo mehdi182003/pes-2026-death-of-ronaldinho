@@ -7,8 +7,9 @@ use asset_bridge::config::Game;
 use asset_bridge::testing::game_dir;
 use std::path::Path;
 
+use formats_rw::dff::{self, Clump, Matrix};
 use formats_rw::img::{DIR_ENTRY_SIZE, DirEntry, ImgArchive};
-use formats_rw::rw;
+use formats_rw::rw::{self, Version};
 
 fn open_gta3(vice_city: &Path) -> ImgArchive {
     ImgArchive::open_pair(&vice_city.join("models").join("gta3")).unwrap()
@@ -85,5 +86,149 @@ fn every_dff_is_a_well_formed_renderware_stream() {
             "
 "
         )
+    );
+}
+
+#[test]
+fn every_dff_parses() {
+    let Some(vice_city) = game_dir(Game::ViceCity) else {
+        return;
+    };
+    let mut archive = open_gta3(&vice_city);
+    let entries = dff_entries(&archive);
+    let mut failures = Vec::new();
+    for entry in &entries {
+        let data = archive.read(entry).unwrap();
+        if let Err(err) = dff::parse_dff(&data) {
+            failures.push(format!("{} : {err}", entry.name));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} échec(s) sur {} DFF :
+{}",
+        failures.len(),
+        entries.len(),
+        failures.join(
+            "
+"
+        )
+    );
+}
+
+fn player(vice_city: &Path) -> Clump {
+    let mut archive = open_gta3(vice_city);
+    let entry = archive.find("player.dff").unwrap().clone();
+    dff::parse_dff(&archive.read(&entry).unwrap()).unwrap()
+}
+
+#[test]
+fn player_dff_has_the_expected_structure() {
+    let Some(vice_city) = game_dir(Game::ViceCity) else {
+        return;
+    };
+    let clump = player(&vice_city);
+    assert_eq!(clump.version, Version(0x3_3002));
+    assert_eq!(clump.frames.len(), 25);
+    let names: Vec<&str> = clump
+        .frames
+        .iter()
+        .filter_map(|frame| frame.name.as_deref())
+        .collect();
+    for expected in ["Root", "Pelvis", "Spine", "Head", "L Hand", "R Foot"] {
+        assert!(names.contains(&expected), "{expected} absent de {names:?}");
+    }
+
+    let [geometry] = clump.geometries.as_slice() else {
+        panic!("une seule géométrie attendue");
+    };
+    assert_eq!(geometry.vertex_count, 1153);
+    assert_eq!(geometry.triangles.len(), 1355);
+    let [material] = geometry.materials.as_slice() else {
+        panic!("un seul matériau attendu");
+    };
+    assert_eq!(material.texture.as_ref().unwrap().name, "player");
+    assert_eq!(geometry.skin.as_ref().unwrap().bone_count, 24);
+    assert_eq!(clump.atomics.len(), 1);
+}
+
+/// Composing each inverse bind matrix of the skin with the world matrix of
+/// its bone's frame gives the identity. This validates at once the frames,
+/// their composition order, the HAnim bone mapping and the skin matrices.
+#[test]
+fn player_bind_pose_matches_its_frames() {
+    let Some(vice_city) = game_dir(Game::ViceCity) else {
+        return;
+    };
+    let clump = player(&vice_city);
+    let mut world: Vec<Matrix> = Vec::with_capacity(clump.frames.len());
+    for frame in &clump.frames {
+        let matrix = match frame.parent {
+            Some(parent) => world[parent].mul(&frame.transform),
+            None => frame.transform,
+        };
+        world.push(matrix);
+    }
+    let hierarchy = clump
+        .frames
+        .iter()
+        .find_map(|frame| frame.hanim.as_ref()?.hierarchy.as_ref())
+        .unwrap();
+    let skin = clump.geometries[0].skin.as_ref().unwrap();
+    assert_eq!(hierarchy.nodes.len(), skin.inverse_bind_matrices.len());
+
+    for (node, inverse_bind) in hierarchy.nodes.iter().zip(&skin.inverse_bind_matrices) {
+        let frame = clump
+            .frames
+            .iter()
+            .position(|frame| frame.hanim.as_ref().is_some_and(|h| h.node_id == node.id))
+            .unwrap();
+        let product = inverse_bind.mul(&world[frame]).to_cols_array();
+        let identity = Matrix::IDENTITY.to_cols_array();
+        let error = product
+            .iter()
+            .zip(identity)
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0, f32::max);
+        assert!(error < 1e-4, "os {} : écart {error}", node.id);
+    }
+}
+
+/// In (vertex 1, vertex 2, vertex 3) order, nearly all triangles turn
+/// counter-clockwise around their vertex normals.
+#[test]
+fn player_triangles_face_their_normals() {
+    let Some(vice_city) = game_dir(Game::ViceCity) else {
+        return;
+    };
+    let clump = player(&vice_city);
+    let geometry = &clump.geometries[0];
+    let target = &geometry.morph_targets[0];
+    let (vertices, normals) = (
+        target.vertices.as_ref().unwrap(),
+        target.normals.as_ref().unwrap(),
+    );
+    let sub = |a: [f32; 3], b: [f32; 3]| [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+    let agreeing = geometry
+        .triangles
+        .iter()
+        .filter(|triangle| {
+            let [a, b, c] = triangle.vertices.map(usize::from);
+            let (u, v) = (sub(vertices[b], vertices[a]), sub(vertices[c], vertices[a]));
+            let face = [
+                u[1] * v[2] - u[2] * v[1],
+                u[2] * v[0] - u[0] * v[2],
+                u[0] * v[1] - u[1] * v[0],
+            ];
+            let normal: [f32; 3] =
+                std::array::from_fn(|i| normals[a][i] + normals[b][i] + normals[c][i]);
+            face.iter().zip(normal).map(|(f, n)| f * n).sum::<f32>() > 0.0
+        })
+        .count();
+    // Measured: 1341 of 1355.
+    assert!(
+        agreeing * 100 >= geometry.triangles.len() * 95,
+        "{agreeing} triangles sur {} suivent leurs normales",
+        geometry.triangles.len()
     );
 }

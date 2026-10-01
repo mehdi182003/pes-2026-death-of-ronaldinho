@@ -5,6 +5,7 @@
 //! file is read from the player's own installation. Each format is described
 //! in `docs/formats/`, with the fields that were checked on real files.
 
+pub mod dff;
 pub mod img;
 pub mod rw;
 
