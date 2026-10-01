@@ -5,7 +5,7 @@
 //! check properties rather than exact counts.
 
 use asset_bridge::config::Game;
-use asset_bridge::pes6::{self, Pes6, PlayerParts};
+use asset_bridge::pes6::{self, Pes6, PlayerParts, PlayerSlot};
 use asset_bridge::testing::game_dir;
 use formats_pes::content::{self, Kind, Packing, Report};
 use formats_pes::model::{self, ModelError};
@@ -294,13 +294,14 @@ fn player_body_gets_its_head_on_the_shoulders() {
     let file = |text: &str| text.parse().unwrap();
     let (model, textures) = pes
         .load_player(&PlayerParts {
-            body: file("0_text:1064"),
+            body: file("0_text:1010"),
             kit: Some(file("0_text:419")),
             boots: Some(file("0_text:5322/0/0")),
             head: Some(file("0_text:1943")),
+            hair: Some(file("0_text:4570")),
         })
         .unwrap();
-    assert_eq!(textures.len(), 3, "tenue, chaussures et visage");
+    assert_eq!(textures.len(), 4, "tenue, chaussures, visage et cheveux");
     // Every body triangle that is drawn uses the kit, the boots or the
     // skin colour; the markings (numbers...) are left out.
     let body_materials: Vec<_> = model
@@ -339,7 +340,8 @@ fn player_body_gets_its_head_on_the_shoulders() {
         .iter()
         .filter(|mesh| mesh.node == head)
         .collect();
-    assert_eq!(heads.len(), 1, "un seul niveau de détail");
+    // One level of detail of the head, and the hair.
+    assert_eq!(heads.len(), 2, "tête et cheveux");
     let nose = heads[0]
         .positions
         .iter()
@@ -347,4 +349,60 @@ fn player_body_gets_its_head_on_the_shoulders() {
         .unwrap();
     let nose_z = m[2] * nose[0] + m[6] * nose[1] + m[10] * nose[2] + m[14];
     assert!(nose_z > 30.0, "nez en z = {nose_z}");
+}
+
+#[test]
+fn body_slots_get_their_role_from_the_geometry() {
+    let Some(dir) = game_dir(Game::Pes6) else {
+        return;
+    };
+    let pes = Pes6::open(&dir).unwrap();
+    let roles = |body: &str| {
+        let data = pes
+            .extract(&body.parse().unwrap())
+            .unwrap()
+            .into_iter()
+            .find(|file| file.kind == Kind::Model)
+            .unwrap()
+            .data;
+        let mut roles = PlayerSlot::classify(&model::parse(&data).unwrap());
+        roles.sort_by_key(|&(slot, _)| slot);
+        roles
+    };
+    use PlayerSlot::{Boots, Kit, Marking, Skin};
+    // The footballer's body: arms, neck and legs 0, kit 1, marking 2,
+    // feet 3, collar strip 4, hands 5.
+    assert_eq!(
+        roles("0_text:995"),
+        [
+            (0, Skin),
+            (1, Kit),
+            (2, Marking),
+            (3, Boots),
+            (4, Kit),
+            (5, Skin)
+        ]
+    );
+    // A field player's body: the numbers (slot 8, 64 vertices on the chest
+    // and the back) are a marking, not skin.
+    let field = roles("0_text:1010");
+    assert!(
+        field.contains(&(1, Kit)) && field.contains(&(4, Boots)),
+        "{field:?}"
+    );
+    assert!(field.contains(&(8, Marking)), "{field:?}");
+    assert!(
+        field.contains(&(0, Skin)) && field.contains(&(7, Skin)),
+        "{field:?}"
+    );
+    // A body of another family numbers its slots differently.
+    let other = roles("0_text:1064");
+    assert!(
+        other.contains(&(1, Kit)) && other.contains(&(4, Boots)),
+        "{other:?}"
+    );
+    assert!(
+        other.contains(&(0, Skin)) && other.contains(&(7, Skin)),
+        "{other:?}"
+    );
 }

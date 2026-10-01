@@ -136,11 +136,11 @@ impl Pes6 {
         })
     }
 
-    /// A player assembled from a body, its kit, its boots and its head.
-    /// Each texture slot of the body gets its texture (see
-    /// [`PlayerSlot`]); the first model of `head`, with the first texture
-    /// of `head`, is placed on the body's head bone. Returns the model and
-    /// its textures.
+    /// A player assembled from a body, its kit, its boots, its head and its
+    /// hair. Each texture slot of the body gets its texture (see
+    /// [`PlayerSlot::classify`]); the first model of `head` and of `hair`,
+    /// each with the first texture of its file, are placed on the body's
+    /// head bone. Returns the model and its textures.
     pub fn load_player(&self, parts: &PlayerParts) -> Result<(Model, Vec<Texture>), Pes6Error> {
         let mut textures = Vec::new();
         let mut load = |file: Option<&PesFile>| -> Result<Option<String>, Pes6Error> {
@@ -171,27 +171,30 @@ impl Pes6 {
             base_color: [1.0; 4],
             texture: texture.clone(),
         };
-        let mut model =
-            convert_model_with(&found.to_string(), &parsed, |slot| {
-                match PlayerSlot::of(slot) {
-                    PlayerSlot::Kit => Some(textured(&kit)),
-                    PlayerSlot::Boots => {
-                        Some(textured(if boots.is_some() { &boots } else { &kit }))
-                    }
-                    PlayerSlot::Skin => Some(Material {
-                        base_color: skin,
-                        texture: None,
-                    }),
-                    PlayerSlot::Marking => None,
-                }
-            });
-        let Some(head) = &parts.head else {
-            return Ok((model, textures));
+        let roles = PlayerSlot::classify(&parsed);
+        let role = |slot: u16| {
+            roles
+                .iter()
+                .find(|(known, _)| *known == slot)
+                .map_or(PlayerSlot::Marking, |&(_, role)| role)
         };
+        let mut model = convert_model_with(&found.to_string(), &parsed, |slot| match role(slot) {
+            PlayerSlot::Kit => Some(textured(&kit)),
+            PlayerSlot::Boots => Some(textured(if boots.is_some() { &boots } else { &kit })),
+            PlayerSlot::Skin => Some(Material {
+                base_color: skin,
+                texture: None,
+            }),
+            PlayerSlot::Marking => None,
+        });
+        if parts.head.is_none() && parts.hair.is_none() {
+            return Ok((model, textures));
+        }
 
         // HYPOTHÈSE: the head bone is the one whose joint is highest (bone
-        // 16 of the 19-bone bodies, at 670.6 units). The head models are
-        // in its space.
+        // 16 of the 19-bone bodies, at 670.6 units). Head and hair models
+        // are in its space (their bounds match: nose towards +X, hair
+        // covering the back of the skull towards -X).
         let bone = parsed
             .bones
             .iter()
@@ -204,23 +207,49 @@ impl Pes6 {
             local: bone.bind_matrix(),
             bone_id: None,
         });
-        // HYPOTHÈSE: a head file holds the same head twice (514 and 114
-        // vertices with the same bounds for 0_text:1943): two levels of
-        // detail, the first being the detailed one.
-        let (found_head, data) = self.first_of(head, Kind::Model)?;
+        let mut name = found.to_string();
+        if let Some(head) = &parts.head {
+            // HYPOTHÈSE: a head file holds the same head twice (514 and 114
+            // vertices with the same bounds for 0_text:1943): two levels of
+            // detail, the first being the detailed one.
+            self.attach(&mut model, node, head, face_name.as_deref())?;
+            name = format!("{name} + {head}");
+        }
+        if let Some(hair) = &parts.hair {
+            // A hairstyle file holds one model and two textures, the second
+            // a smaller copy of the first (0_text:4570: 128 × 64, 64 × 32).
+            let texture = self.load_texture(hair)?;
+            let texture_name = texture.name.clone();
+            textures.push(texture);
+            self.attach(&mut model, node, hair, Some(&texture_name))?;
+            name = format!("{name} + {hair}");
+        }
+        model.name = name;
+        Ok((model, textures))
+    }
+
+    /// Adds the first model of `file`, with `texture` on every slot, to
+    /// `model` under `node`.
+    fn attach(
+        &self,
+        model: &mut Model,
+        node: usize,
+        file: &PesFile,
+        texture: Option<&str>,
+    ) -> Result<(), Pes6Error> {
+        let (found, data) = self.first_of(file, Kind::Model)?;
         let parsed = pes_model::parse(&data).map_err(|source| Pes6Error::Model {
-            file: found_head,
+            file: found.clone(),
             source,
         })?;
-        let converted = convert_model("tête", &parsed, face_name.as_deref());
+        let converted = convert_model(&found.to_string(), &parsed, texture);
         model.meshes.extend(
             converted
                 .meshes
                 .into_iter()
                 .map(|mesh| Mesh { node, ..mesh }),
         );
-        model.name = format!("{} + {head}", model.name);
-        Ok((model, textures))
+        Ok(())
     }
 
     fn first_of(&self, file: &PesFile, kind: Kind) -> Result<(PesFile, Vec<u8>), Pes6Error> {
@@ -241,7 +270,7 @@ impl Pes6 {
 /// The files a player is assembled from (see [`Pes6::load_player`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlayerParts {
-    /// The body (`0_text:1064`).
+    /// The body (`0_text:995`).
     pub body: PesFile,
     /// The kit: shirt, shorts and socks on one 512 × 256 texture
     /// (`0_text:419`).
@@ -250,41 +279,129 @@ pub struct PlayerParts {
     pub boots: Option<PesFile>,
     /// The head and its face texture (`0_text:1943`).
     pub head: Option<PesFile>,
+    /// The hairstyle and its texture (`0_text:4570`).
+    pub hair: Option<PesFile>,
 }
 
 /// What a texture slot of a player's body (opcode `02` of its draws)
-/// shows, from where its triangles are on the body and which part of the
-/// texture they use.
+/// shows.
+///
+/// The slot numbers differ between families of bodies (at least eight
+/// numberings among the 581 bodies with 19 bones), so the role of a slot is
+/// found from where its vertices are on the body and which part of the
+/// texture they use (see [`PlayerSlot::classify`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlayerSlot {
-    /// Slots 1, 5 and 10: shirt, shorts, socks. Slot 1 is checked: its
-    /// texture coordinates fall exactly on the shirt, sleeves and shorts of
-    /// a kit texture.
-    // HYPOTHÈSE: slot 5 (thin strips of the arms, right edge of the kit
-    // texture) and slot 10 (back of the legs, repeated texture) use the kit
-    // too.
+    /// Shirt, sleeves, shorts and socks, on one kit texture. Checked on
+    /// bodies 995 and 1064: the texture coordinates fall exactly on the
+    /// parts of a 512 × 256 kit, both sleeves on the same colour.
     Kit,
-    /// Slot 4: the feet.
+    /// The feet.
     // HYPOTHÈSE: the boots texture; the feet only use its left third.
     Boots,
-    /// Slots 0 and 7: arms, hands, neck.
+    /// Arms, hands, neck, legs.
     // HYPOTHÈSE: bare skin, drawn with the average colour of the face
     // texture until a skin texture is found.
     Skin,
-    /// Slots 2, 3, 6, 8, 9: small patches on the chest, the back and the
-    /// shorts (numbers, name, badge ?). Not drawn yet.
+    /// Small patches on the chest, the back and the shorts (numbers, name,
+    /// badge ?). Not drawn yet: the game builds them from fonts.
     Marking,
 }
 
 impl PlayerSlot {
-    pub fn of(slot: u16) -> Self {
-        match slot {
-            1 | 5 | 10 => PlayerSlot::Kit,
-            4 => PlayerSlot::Boots,
-            0 | 7 => PlayerSlot::Skin,
-            _ => PlayerSlot::Marking,
+    /// The role of every texture slot of a body, from its vertices:
+    ///
+    /// - all of them near the ground (below 70 units): the feet;
+    /// - all of them at the end of the arms (|x| > 300): the hands;
+    /// - fewer than 60: a marking;
+    /// - all of them on the right edge of the texture (u > 0.9): a strip of
+    ///   the kit (collar, cuffs);
+    /// - otherwise a large part: the one with the most vertices in the
+    ///   middle of the chest (|x| < 60, 400 < y < 560) is the kit; the
+    ///   others are skin if they reach the arms (|x| > 200) or the legs
+    ///   (y < 300), markings if they stay on the trunk.
+    // HYPOTHÈSE: rules drawn up on bodies 995, 1010 and 1064 and checked on
+    // the texture coordinates and by eye (body 1010); to be confirmed on
+    // other bodies.
+    pub fn classify(model: &PesModel) -> Vec<(u16, PlayerSlot)> {
+        let mut slots: Vec<(u16, Vec<SlotPoint>)> = Vec::new();
+        for draw in &model.draws {
+            let vertices = &model.parts[draw.part].vertices;
+            let points = draw.triangles.iter().flatten().map(|&i| {
+                (
+                    vertices[usize::from(i)].position,
+                    vertices[usize::from(i)].uv,
+                )
+            });
+            match slots.iter_mut().find(|(slot, _)| *slot == draw.texture) {
+                Some((_, all)) => all.extend(points),
+                None => slots.push((draw.texture, points.collect())),
+            }
         }
+        let chest = |points: &[SlotPoint]| {
+            points
+                .iter()
+                .filter(|(p, _)| p[0].abs() < 60.0 && (400.0..560.0).contains(&p[1]))
+                .count()
+        };
+        let mut roles: Vec<(u16, Option<PlayerSlot>)> = slots
+            .iter()
+            .map(|(slot, points)| {
+                let role = if points.iter().all(|(p, _)| p[1] < 70.0) {
+                    Some(PlayerSlot::Boots)
+                } else if points.iter().all(|(p, _)| p[0].abs() > 300.0) {
+                    Some(PlayerSlot::Skin)
+                } else if points.len() / 3 < 20 || unique(points) < 60 {
+                    Some(PlayerSlot::Marking)
+                } else if points.iter().all(|(_, uv)| uv[0] > 0.9) {
+                    Some(PlayerSlot::Kit)
+                } else {
+                    None
+                };
+                (*slot, role)
+            })
+            .collect();
+        let kit = slots
+            .iter()
+            .zip(&roles)
+            .filter(|(_, (_, role))| role.is_none())
+            .max_by_key(|((_, points), _)| chest(points))
+            .map(|((slot, _), _)| *slot);
+        // Bare skin reaches the arms or the legs; a large part that stays
+        // on the trunk is a marking (the numbers of body 1010: 64 vertices
+        // on the chest and the back).
+        let reaches_limbs = |points: &[SlotPoint]| {
+            points
+                .iter()
+                .any(|(p, _)| p[0].abs() > 200.0 || p[1] < 300.0)
+        };
+        for ((slot, points), (_, role)) in slots.iter().zip(&mut roles) {
+            if role.is_none() {
+                *role = Some(if Some(*slot) == kit {
+                    PlayerSlot::Kit
+                } else if reaches_limbs(points) {
+                    PlayerSlot::Skin
+                } else {
+                    PlayerSlot::Marking
+                });
+            }
+        }
+        roles
+            .into_iter()
+            .map(|(slot, role)| (slot, role.expect("every slot has a role")))
+            .collect()
     }
+}
+
+/// A vertex of a texture slot: its position and texture coordinates.
+type SlotPoint = ([f32; 3], [f32; 2]);
+
+/// Number of distinct positions among `points`.
+fn unique(points: &[SlotPoint]) -> usize {
+    let mut keys: Vec<[u32; 3]> = points.iter().map(|(p, _)| p.map(f32::to_bits)).collect();
+    keys.sort_unstable();
+    keys.dedup();
+    keys.len()
 }
 
 /// Skin colour when no face texture is given, sRGB.

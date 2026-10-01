@@ -6,7 +6,7 @@
 //! cargo run -p asset-tools --bin viewer -- player
 //! cargo run -p asset-tools --bin viewer -- player --anim run_player
 //! cargo run -p asset-tools --bin viewer -- --textures D:\ViceCity\txd\LOADSC0.TXD
-//! cargo run -p asset-tools --bin viewer -- player --pes 0_text:1064 --pes-texture 0_text:419 --pes-boots 0_text:5322/0/0 --pes-head 0_text:1943
+//! cargo run -p asset-tools --bin viewer -- player --pes 0_text:995 --pes-texture 0_text:419 --pes-boots 0_text:5322/0/0 --pes-head 0_text:1943 --pes-hair 0_text:4570
 //! ```
 
 use std::f32::consts::FRAC_PI_2;
@@ -40,7 +40,7 @@ struct Args {
     model: Option<String>,
 
     /// Corps de joueur de PES 6, <archive>:<numéro>[/<sous-fichier>] (par
-    /// exemple 0_text:1064) : seul, ou à côté du modèle de Vice City.
+    /// exemple 0_text:995) : seul, ou à côté du modèle de Vice City.
     #[arg(long, conflicts_with_all = ["textures", "anim"])]
     pes: Option<PesFile>,
 
@@ -52,6 +52,11 @@ struct Args {
     /// Chaussures du joueur de PES 6 (par exemple 0_text:5322/0/0).
     #[arg(long, requires = "pes")]
     pes_boots: Option<PesFile>,
+
+    /// Coiffure du joueur de PES 6 : son modèle et sa texture (par exemple
+    /// 0_text:4570).
+    #[arg(long, requires = "pes")]
+    pes_hair: Option<PesFile>,
 
     /// Tête à placer sur le modèle de PES 6 : ses modèles et sa texture
     /// (par exemple 0_text:1943).
@@ -81,6 +86,11 @@ struct Args {
     /// Enregistre une capture de la fenêtre dans ce fichier PNG, puis ferme.
     #[arg(long)]
     capture: Option<PathBuf>,
+
+    /// Angle de départ de la caméra autour du modèle, en degrés (0 : de
+    /// face, 180 : de dos).
+    #[arg(long, default_value_t = 34.0)]
+    yaw: f32,
 }
 
 fn main() -> AppExit {
@@ -118,6 +128,7 @@ fn main() -> AppExit {
             path: args.capture.clone(),
             frame: 0,
         })
+        .insert_resource(StartYaw(args.yaw.to_radians()))
         .insert_resource(Options {
             skeleton: true,
             mesh: true,
@@ -152,6 +163,7 @@ fn load(args: &Args) -> Result<ViewerScene> {
                 kit: args.pes_texture.clone(),
                 boots: args.pes_boots.clone(),
                 head: args.pes_head.clone(),
+                hair: args.pes_hair.clone(),
             },
         )?),
         None => None,
@@ -404,6 +416,10 @@ struct ModelRoot;
 
 /// `--capture`: where to save a picture of the window, and the frames
 /// drawn so far.
+/// `--yaw`, in radians.
+#[derive(Resource)]
+struct StartYaw(f32);
+
 #[derive(Resource)]
 struct Capture {
     path: Option<PathBuf>,
@@ -446,11 +462,11 @@ struct Orbit {
 }
 
 impl Orbit {
-    /// Frames bounds seen slightly from above, three-quarters.
-    fn framing(min: Vec3, max: Vec3) -> Self {
+    /// Frames bounds seen slightly from above, from the angle `yaw`.
+    fn framing(min: Vec3, max: Vec3, yaw: f32) -> Self {
         Self {
             target: (min + max) / 2.0,
-            yaw: 0.6,
+            yaw,
             pitch: -0.25,
             distance: (max - min).length().max(0.5) * 1.3,
         }
@@ -463,7 +479,12 @@ impl Orbit {
     }
 }
 
-fn setup(mut spawner: ModelSpawner, scene: Res<ViewerScene>, options: Res<Options>) {
+fn setup(
+    mut spawner: ModelSpawner,
+    scene: Res<ViewerScene>,
+    options: Res<Options>,
+    start_yaw: Res<StartYaw>,
+) {
     let root_transform = options.root_transform();
     let (root, _) = spawner.spawn(
         &scene.model,
@@ -481,7 +502,7 @@ fn setup(mut spawner: ModelSpawner, scene: Res<ViewerScene>, options: Res<Option
     }
 
     let (min, max) = scene.displayed_bounds(&root_transform);
-    let orbit = Orbit::framing(min, max);
+    let orbit = Orbit::framing(min, max, start_yaw.0);
     commands.spawn((Camera3d::default(), orbit.transform(), orbit));
     commands.spawn((
         DirectionalLight {
@@ -510,6 +531,7 @@ fn handle_keys(
     mut roots: Query<(&mut Transform, Option<&mut AnimationLayers>), With<ModelRoot>>,
     mut meshes: Query<&mut Visibility, With<Mesh3d>>,
     mut cameras: Query<&mut Orbit>,
+    start_yaw: Res<StartYaw>,
 ) {
     // Letters at the same place on AZERTY and QWERTY keyboards.
     if keys.just_pressed(KeyCode::KeyS) {
@@ -549,7 +571,7 @@ fn handle_keys(
     if turn || keys.just_pressed(KeyCode::KeyF) {
         let (min, max) = scene.displayed_bounds(&options.root_transform());
         for mut orbit in &mut cameras {
-            *orbit = Orbit::framing(min, max);
+            *orbit = Orbit::framing(min, max, start_yaw.0);
         }
     }
 }
@@ -558,8 +580,13 @@ fn orbit_camera(
     buttons: Res<ButtonInput<MouseButton>>,
     motion: Res<AccumulatedMouseMotion>,
     scroll: Res<AccumulatedMouseScroll>,
+    capture: Res<Capture>,
     mut cameras: Query<(&mut Orbit, &mut Transform)>,
 ) {
+    // A capture keeps the framing it starts with, whatever the mouse does.
+    if capture.path.is_some() {
+        return;
+    }
     let Ok((mut orbit, mut transform)) = cameras.single_mut() else {
         return;
     };
