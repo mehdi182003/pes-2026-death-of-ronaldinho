@@ -29,7 +29,7 @@ cargo run -p asset-tools -- dump vc:player.dff             # dump annoté (arbre
 cargo run -p asset-tools --bin viewer -- player            # visualiseur 3D (validation à l'œil)
 cargo run -p asset-tools --bin viewer -- player --anim run_player   # animation
 cargo run -p asset-tools --bin viewer -- --textures vc:player.txd     # textures à plat
-cargo run -p asset-tools --bin viewer -- player --pes 0_text:1064 --pes-texture 0_text:296/1/0 --pes-head 0_text:1943   # joueur PES 6 à côté de Tommy
+cargo run -p asset-tools --bin viewer -- player --pes 0_text:1064 --pes-texture 0_text:419 --pes-boots 0_text:5322/0/0 --pes-head 0_text:1943   # joueur PES 6 à côté de Tommy
 ```
 
 Les fichiers extraits vont dans le dossier de cache de l'utilisateur (`%LOCALAPPDATA%\chaos-fc\extracted\` sous Windows), jamais dans le dépôt. On peut les ouvrir dans ImHex.

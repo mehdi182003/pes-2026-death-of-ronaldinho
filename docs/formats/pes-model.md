@@ -69,6 +69,18 @@ Chaque os donne le passage de l'espace du modèle à celui de l'os : un point `p
 
 HYPOTHÈSE : `R = Rz·Ry·Rx` (X d'abord). Avec cet ordre, les articulations des bras (épaules à ±80,8, coudes à ±205,8, poignets à ±297,3, toutes à 602,7 de haut) et de la tête (670,6) tombent où le maillage les attend, et une tête posée sur l'os 16 regarde du côté où pointent les orteils (+Z). L'ordre `Ry·Rz·Rx`, essayé d'abord, place aussi bien les articulations mais tourne la tête vers l'arrière (constaté à l'œil, puis vérifié par le test `player_body_gets_its_head_on_the_shoulders`). Celles des jambes et du dos ne tombent pas encore juste, quel que soit l'ordre : à reprendre au jalon J6.
 
+## Emplacements de texture d'un corps de joueur
+
+L'instruction `02` du programme de dessin choisit l'emplacement de texture. Sur un corps (n° 1064), d'après la place des triangles sur le corps et la partie de la texture qu'ils utilisent (`asset_bridge::pes6::PlayerSlot`) :
+
+| Emplacement | Partie du corps | Texture |
+| --- | --- | --- |
+| 1 | maillot, manches, short, chaussettes | tenue 512 × 256 : vérifié, les coordonnées tombent exactement sur les zones de la tenue |
+| 5, 10 | fines bandes des bras ; arrière des jambes (texture répétée) | HYPOTHÈSE : la tenue aussi |
+| 4 | pieds | HYPOTHÈSE : la chaussure (seul le tiers gauche de la texture est utilisé) |
+| 0, 7 | bras, mains, cou | HYPOTHÈSE : la peau ; pas de texture de peau trouvée, couleur moyenne du visage |
+| 2, 3, 6, 8, 9 | petites zones du torse, du dos et du short | numéros, nom, écusson ? Pas encore affichés |
+
 ## Repère et échelle
 
 - Y vers le haut, pieds à Y = 0 ; les bras d'un personnage en T s'étendent le long de X.
@@ -80,7 +92,9 @@ HYPOTHÈSE : `R = Rz·Ry·Rx` (X d'abord). Avec cet ordre, les articulations des
 | Numéro | Contenu |
 | --- | --- |
 | 1060 et voisins (dont 1064) | corps de joueur en T, sans tête, 19 os, 39 parties, 5 niveaux de détail |
-| 288 à 297 | ensembles d'entraînement : 17 modèles et 24 textures, dont la chasuble jaune 296/1/0 (128 × 128 : chasuble, short, chaussettes, chaussures), qui s'applique au corps |
+| 288 à 297 | accessoires du terrain d'entraînement : 17 petits modèles et 24 textures (pas des joueurs) |
+| 409 à 434 | textures de tenues lisibles, 512 × 256 : maillot, short et chaussettes (419 : jaune et bleu ; 420 : rouge et bleu ; 421 : bleu et blanc ; 426 : blanc...) |
+| 5322 et voisins (chaussures) | 5322/0/0 : chaussure (tige et semelle), 256 × 256 |
 | 1891 à 2937 (visages) | tête : 2 modèles (la même tête en deux niveaux de détail) et une texture de visage ; se place sur l'os 16 du corps |
 
 Les grandes textures de maillots sont chiffrées (voir [afs.md](afs.md)).
@@ -94,5 +108,5 @@ Test `player_body_gets_its_head_on_the_shoulders` : la tête se place au-dessus 
 Pour voir un joueur à côté de Tommy :
 
 ```sh
-cargo run -p asset-tools --bin viewer -- player --pes 0_text:1064 --pes-texture 0_text:296/1/0 --pes-head 0_text:1943
+cargo run -p asset-tools --bin viewer -- player --pes 0_text:1064 --pes-texture 0_text:419 --pes-boots 0_text:5322/0/0 --pes-head 0_text:1943
 ```
