@@ -9,9 +9,9 @@ use std::ops::Range;
 use crate::packed::{self, PackedHeader};
 
 /// Signature of the 3D models: first four bytes `20 05 04 20`.
-// HYPOTHÈSE: these are models. They are the only content of the face and
-// hairstyle slots of the community map of 0_text.afs, and come in threes
-// for a face; their layout is read in J5.
+// HYPOTHÈSE: these are models. In the face and hairstyle slots of the
+// community map of 0_text.afs, each file is a container of two of them and
+// one texture; their layout is read in J5.
 pub const MODEL_MAGIC: [u8; 4] = [0x20, 0x05, 0x04, 0x20];
 
 /// Signature of the textures: first four bytes `94 72 85 29`.

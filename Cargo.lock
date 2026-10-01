@@ -315,6 +315,7 @@ dependencies = [
 name = "asset-bridge"
 version = "0.1.0"
 dependencies = [
+ "formats-pes",
  "formats-rw",
  "serde",
  "tempfile",

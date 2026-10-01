@@ -56,9 +56,10 @@ impl Game {
                 Ok(())
             }
             Game::Pes6 => {
-                // HYPOTHÈSE: a PC install of PES 6 keeps its AFS archives in a
-                // `dat` folder. Not yet checked on a real copy; the exact
-                // archive names will be listed during J4.
+                // A PC install of PES 6 keeps its AFS archives in a `dat`
+                // folder: checked on the PC demo (0_sound, 0_text and
+                // e_text.afs, see docs/formats/afs.md).
+                // HYPOTHÈSE: the full game has the same layout.
                 let has_afs = fs::read_dir(dir.join("dat"))
                     .map(|entries| {
                         entries.flatten().any(|entry| {
