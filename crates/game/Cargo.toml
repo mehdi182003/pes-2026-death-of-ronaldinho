@@ -1,0 +1,13 @@
+[package]
+name = "game"
+description = "Chaos FC: the Bevy application."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "chaos-fc"
+path = "src/main.rs"
+
+[dependencies]

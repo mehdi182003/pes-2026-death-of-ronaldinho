@@ -1,0 +1,9 @@
+[package]
+name = "asset-bridge"
+description = "Converts parsed game files into engine-neutral types; owns game paths and the extraction cache."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]

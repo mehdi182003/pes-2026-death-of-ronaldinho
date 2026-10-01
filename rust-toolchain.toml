@@ -1,0 +1,6 @@
+# Version figée pour que rustfmt et clippy donnent le même résultat en local
+# et en CI. Minimum requis par Bevy 0.19 : 1.95.
+[toolchain]
+channel = "1.98.1"
+components = ["rustfmt", "clippy"]
+profile = "minimal"
