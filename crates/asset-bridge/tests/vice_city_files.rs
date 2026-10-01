@@ -5,6 +5,7 @@
 
 use asset_bridge::config::Game;
 use asset_bridge::testing::game_dir;
+use asset_bridge::vice_city::{ViceCity, ViceCityError};
 use std::path::Path;
 
 use formats_rw::dff::{self, Clump, Matrix};
@@ -231,4 +232,40 @@ fn player_triangles_face_their_normals() {
         "{agreeing} triangles sur {} suivent leurs normales",
         geometry.triangles.len()
     );
+}
+
+#[test]
+fn player_model_converts_to_the_neutral_model() {
+    let Some(vice_city) = game_dir(Game::ViceCity) else {
+        return;
+    };
+    let mut game = ViceCity::open(&vice_city).unwrap();
+    // Any case, with or without the extension.
+    let model = game.load_model("PLAYER").unwrap();
+    assert_eq!(model.name, "player.dff");
+    assert_eq!(model.nodes.len(), 25);
+    assert_eq!((model.vertex_count(), model.triangle_count()), (1153, 1355));
+
+    let skeleton = model.skeleton.as_ref().unwrap();
+    assert_eq!(skeleton.bones.len(), 24);
+    assert_eq!(skeleton.bones[1].name, "Pelvis");
+
+    // Bind pose: Tommy stands along +Y, about 1.8 m tall, arms spread
+    // along X.
+    let positions = &model.meshes[0].positions;
+    let extent = |axis: usize| {
+        let values = positions.iter().map(|p| p[axis]);
+        values.clone().fold(f32::MIN, f32::max) - values.fold(f32::MAX, f32::min)
+    };
+    let (width, height, depth) = (extent(0), extent(1), extent(2));
+    assert!((1.7..2.0).contains(&height), "hauteur {height}");
+    assert!(
+        width > depth && height > depth,
+        "{width} x {height} x {depth}"
+    );
+
+    assert!(matches!(
+        game.load_model("pas-un-modele"),
+        Err(ViceCityError::NotFound(_))
+    ));
 }
