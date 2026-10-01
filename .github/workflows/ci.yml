@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  # Pas d'infos de debug en CI : builds plus légers (Bevy est volumineux).
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_PROFILE_TEST_DEBUG: 0
+
+jobs:
+  assets-guard:
+    name: Aucun fichier de jeu dans le dépôt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Rechercher les extensions interdites
+        run: |
+          forbidden=$(git ls-files | grep -iE '\.(img|dir|dff|txd|ifp|col|sfx|sdt|raw|adf|afs|bin|str|dump)$' || true)
+          if [ -n "$forbidden" ]; then
+            echo "::error::Fichiers de jeu interdits dans le dépôt (voir docs/BRIEF.md, contraintes légales) :"
+            echo "$forbidden"
+            exit 1
+          fi
+          echo "Aucun fichier de jeu suivi par Git."
+
+  check:
+    name: fmt, clippy, tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Dépendances système de Bevy
+        # docs/linux_dependencies.md de Bevy 0.19.1
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            g++ pkg-config libx11-dev libasound2-dev libudev-dev \
+            libxkbcommon-x11-0 libwayland-dev libxkbcommon-dev
+      - name: Toolchain Rust (rust-toolchain.toml)
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - name: Formatage
+        run: cargo fmt --all --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Tests
+        run: cargo test --workspace --locked
