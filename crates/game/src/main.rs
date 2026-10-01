@@ -129,7 +129,7 @@ fn setup_world(
     commands.spawn((
         Text::new(
             "Chaos FC - jalon J3\n\
-             Clic gauche (maintenu) : tirer avec le Colt 45\n\
+             Souris : viser, clic gauche (maintenu) : tirer avec le Colt 45\n\
              Clic droit + glisser : tourner la caméra, molette : zoom",
         ),
         TextFont::from_font_size(15.0),
@@ -171,13 +171,14 @@ fn spawn_tommy(
         ]),
         Shooter::new(
             assets.colt.clone(),
+            rotation,
             assets.tommy.clone(),
             colt,
             audio_sources.add(bevy_bridge::audio_source(&assets.colt.fire_sound)),
         ),
     ));
-    // HYPOTHÈSE: Vice City attaches the weapon model to the hand bone as is;
-    // to be confirmed by eye (the grip must sit in the hand).
+    // The weapon model goes on the hand bone as is: confirmed by eye, the
+    // grip sits in the hand.
     commands.entity(colt).insert(ChildOf(hand));
 }
 

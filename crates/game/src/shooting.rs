@@ -1,28 +1,48 @@
-//! Shooting: the firing animation of the weapon over the body, a round at
-//! each firing point of the loop, with its sound, a ray along the barrel and
-//! visible effects.
+//! Shooting: the mouse cursor aims, the shooter turns towards the aimed
+//! point, the firing animation of the weapon plays over the body, and a
+//! round leaves the barrel towards the aimed point at each firing point of
+//! the loop, with its sound and visible effects.
 
 use std::sync::Arc;
 
 use asset_bridge::model::{Model, Weapon};
 use bevy::prelude::*;
+use bevy::window::PrimaryWindow;
 use bevy_bridge::{AnimationLayer, AnimationLayers};
+
+/// How far the cursor can aim when it points at nothing (sky).
+const AIM_DISTANCE: f32 = 50.0;
 
 pub struct ShootingPlugin;
 
 impl Plugin for ShootingPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(
+        app.init_resource::<Aim>().add_systems(
             Update,
-            (pull_trigger, fire_rounds, expire_effects, draw_tracers).chain(),
+            (
+                aim_with_cursor,
+                face_aim,
+                pull_trigger,
+                fire_rounds,
+                expire_effects,
+                draw_effects,
+            )
+                .chain(),
         );
     }
 }
+
+/// Point under the mouse cursor: on a target or the ground, or far away
+/// along the cursor ray.
+#[derive(Resource, Default)]
+struct Aim(Option<Vec3>);
 
 /// A character holding a firearm.
 #[derive(Component)]
 pub struct Shooter {
     weapon: Arc<Weapon>,
+    /// Rotation of the character when facing -Z (its model turned upright).
+    upright: Quat,
     /// The character's model, to bind the firing animation to its bones.
     body: Arc<Model>,
     /// Root entity of the weapon model, in the hand.
@@ -36,12 +56,14 @@ pub struct Shooter {
 impl Shooter {
     pub fn new(
         weapon: Arc<Weapon>,
+        upright: Quat,
         body: Arc<Model>,
         weapon_entity: Entity,
         sound: Handle<AudioSource>,
     ) -> Self {
         Self {
             weapon,
+            upright,
             body,
             weapon_entity,
             sound,
@@ -58,6 +80,42 @@ impl Shooter {
 #[derive(Component)]
 pub struct Target {
     pub half_size: Vec3,
+}
+
+/// Casts the cursor ray from the camera into the scene.
+fn aim_with_cursor(
+    mut aim: ResMut<Aim>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    cameras: Query<(&Camera, &GlobalTransform)>,
+    targets: Query<(&GlobalTransform, &Target)>,
+) {
+    let ray = windows
+        .single()
+        .ok()
+        .and_then(Window::cursor_position)
+        .zip(cameras.single().ok())
+        .and_then(|(cursor, (camera, transform))| camera.viewport_to_world(transform, cursor).ok());
+    aim.0 = ray.map(|ray| {
+        let direction = *ray.direction;
+        let distance = cast_ray(ray.origin, direction, AIM_DISTANCE, &targets);
+        ray.origin + direction * distance.unwrap_or(AIM_DISTANCE)
+    });
+}
+
+/// The shooter turns on the spot to face the aimed point.
+fn face_aim(aim: Res<Aim>, mut shooters: Query<(&Shooter, &mut Transform)>) {
+    let Some(point) = aim.0 else {
+        return;
+    };
+    for (shooter, mut transform) in &mut shooters {
+        let flat = (point - transform.translation) * Vec3::new(1.0, 0.0, 1.0);
+        if flat.length_squared() < 0.01 {
+            continue;
+        }
+        // Yaw that turns -Z (the forward of the upright model) towards it.
+        let yaw = (-flat.x).atan2(-flat.z);
+        transform.rotation = Quat::from_rotation_y(yaw) * shooter.upright;
+    }
 }
 
 /// Holding the left button raises the arm and loops the firing part of the
@@ -94,6 +152,7 @@ fn pull_trigger(
 /// A round leaves the barrel each time the firing animation passes its
 /// firing point.
 fn fire_rounds(
+    aim: Res<Aim>,
     mut commands: Commands,
     mut shooters: Query<(&mut Shooter, &AnimationLayers)>,
     globals: Query<&GlobalTransform>,
@@ -126,11 +185,17 @@ fn fire_rounds(
             continue;
         };
 
-        // HYPOTHÈSE: the muzzle offset of weapon.dat is in the weapon's
-        // space and the barrel points along its +X (the offset of the Colt
-        // 45 is mostly along X). To be confirmed by eye with the tracer.
+        // The muzzle offset of weapon.dat is in the weapon's space, the
+        // barrel along its +X: confirmed by eye (flash and tracer leave the
+        // barrel). As in GTA, the round flies towards the aimed point, not
+        // along the barrel of the animated arm.
         let muzzle = weapon.transform_point(Vec3::from_array(shooter.weapon.muzzle));
-        let direction = (weapon.rotation() * Vec3::X).normalize();
+        let direction = aim
+            .0
+            .map(|point| point - muzzle)
+            .filter(|towards| towards.length_squared() > 1e-4)
+            .unwrap_or(weapon.rotation() * Vec3::X)
+            .normalize();
         let range = shooter.weapon.range;
         let hit = cast_ray(muzzle, direction, range, &targets);
         let end = muzzle + direction * hit.unwrap_or(range);
@@ -225,9 +290,17 @@ fn expire_effects(
     }
 }
 
-fn draw_tracers(mut gizmos: Gizmos, tracers: Query<&Tracer>) {
+/// Tracers, and the crosshair on the aimed point.
+fn draw_effects(mut gizmos: Gizmos, aim: Res<Aim>, tracers: Query<&Tracer>) {
     for tracer in &tracers {
         gizmos.line(tracer.from, tracer.to, Color::srgb(1.0, 0.9, 0.5));
+    }
+    if let Some(point) = aim.0 {
+        gizmos.sphere(
+            Isometry3d::from_translation(point),
+            0.08,
+            Color::srgb(1.0, 0.2, 0.2),
+        );
     }
 }
 

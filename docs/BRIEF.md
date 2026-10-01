@@ -119,7 +119,8 @@ La crate game n'importe jamais formats-rw ni formats-pes directement. Changer de
 - Les sons de la banque SFX sont joués via la feature `wav` de Bevy : chaque son est emballé en WAV en mémoire.
 - Les paramètres des armes viennent de `data/weapon.dat` (portée, boucle de tir, instant du coup, point de sortie), pas de constantes inventées. Le modèle et le numéro de son de chaque arme sont décrits dans `asset_bridge::vice_city` (`COLT45`, `UZI`, `M4`) en attendant la lecture des fichiers IDE.
 - Le jeu repère le monde en Y vers le haut (Bevy) ; les modèles de Vice City sont tournés par `retarget::VICE_CITY_TO_Y_UP`. L'arme est fixée telle quelle au nœud « R Hand » du personnage.
-- Le tir est un lancer de rayon le long du canon (+X de l'arme), contre le sol et des cibles en boîtes ; la physique (Rapier) arrivera avec le foot (J7).
+- Visée comme dans GTA : le curseur désigne un point (rayon depuis la caméra), le tireur pivote vers lui et la balle part du canon **vers ce point**, pas dans l'axe du bras animé (qui pointe vers le haut dans `colt45_fire`). Le tir est un lancer de rayon contre le sol et des cibles en boîtes ; la physique (Rapier) arrivera avec le foot (J7).
+- L'arme est fixée telle quelle au nœud « R Hand » : confirmé à l'œil.
 
 ```text
 chaos-fc/
