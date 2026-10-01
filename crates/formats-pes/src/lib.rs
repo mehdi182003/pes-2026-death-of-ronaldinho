@@ -8,4 +8,5 @@
 //! checked on real files.
 
 pub mod afs;
+pub mod content;
 pub mod packed;
