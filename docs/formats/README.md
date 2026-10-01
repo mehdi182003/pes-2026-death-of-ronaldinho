@@ -13,6 +13,7 @@ Règles :
 | Flux RenderWare (chunks) | Vice City | [renderware.md](renderware.md) | Vérifié sur les 4617 DFF |
 | DFF (modèles) | Vice City | [dff.md](dff.md) | Vérifié sur les 4617 DFF ; texture : une hypothèse |
 | TXD (textures) | Vice City | [txd.md](txd.md) | Vérifié sur 1399 TXD ; ordre des couleurs des palettes à confirmer à l'œil |
+| IFP (animations) | Vice City | [ifp.md](ifp.md) | Vérifié sur les 29 IFP ; liens de la variante 48 octets : hypothèse |
 
 ## Outils d'inspection
 

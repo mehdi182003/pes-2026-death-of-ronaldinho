@@ -9,6 +9,7 @@ use asset_bridge::vice_city::{ViceCity, ViceCityError};
 use std::path::Path;
 
 use formats_rw::dff::{self, Clump, Matrix};
+use formats_rw::ifp;
 use formats_rw::img::{DIR_ENTRY_SIZE, DirEntry, ImgArchive};
 use formats_rw::rw::{self, Version};
 use formats_rw::txd::{self, raster_format};
@@ -378,4 +379,123 @@ fn player_textures_load_by_name() {
     let model = game.load_model("player").unwrap();
     let material = &model.meshes[0].primitives[0].material;
     assert_eq!(material.texture.as_deref(), Some("player"));
+}
+
+#[test]
+fn every_ifp_parses() {
+    let Some(vice_city) = game_dir(Game::ViceCity) else {
+        return;
+    };
+    let ped =
+        ifp::parse_ifp(&std::fs::read(vice_city.join("anim").join("ped.ifp")).unwrap()).unwrap();
+    assert_eq!(ped.name, "ped");
+    assert_eq!(ped.animations.len(), 234);
+
+    let mut archive = open_gta3(&vice_city);
+    let entries: Vec<DirEntry> = archive
+        .entries()
+        .iter()
+        .filter(|entry| entry.name.to_lowercase().ends_with(".ifp"))
+        .cloned()
+        .collect();
+    assert_eq!(entries.len(), 28);
+    let mut packages = vec![ped];
+    for entry in &entries {
+        let bytes = archive.read(entry).unwrap();
+        match ifp::parse_ifp(&bytes) {
+            Ok(package) => packages.push(package),
+            Err(err) => panic!("{} : {err}", entry.name),
+        }
+    }
+
+    // Unit quaternions, times in increasing order.
+    for package in &packages {
+        for animation in &package.animations {
+            for object in &animation.objects {
+                let keyframes = &object.keyframes;
+                assert!(keyframes[0].time >= 0.0);
+                assert!(keyframes.windows(2).all(|k| k[0].time <= k[1].time));
+                for keyframe in keyframes {
+                    let norm: f32 = keyframe.rotation.iter().map(|c| c * c).sum::<f32>().sqrt();
+                    assert!(
+                        (norm - 1.0).abs() < 1e-3,
+                        "{} / {}",
+                        animation.name,
+                        object.name
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Rotation matrix (columns right, up, at) of a unit quaternion (x, y, z, w).
+fn quaternion_matrix([x, y, z, w]: [f32; 4]) -> Matrix {
+    Matrix {
+        right: [
+            1.0 - 2.0 * (y * y + z * z),
+            2.0 * (x * y + z * w),
+            2.0 * (x * z - y * w),
+        ],
+        up: [
+            2.0 * (x * y - z * w),
+            1.0 - 2.0 * (x * x + z * z),
+            2.0 * (y * z + x * w),
+        ],
+        at: [
+            2.0 * (x * z + y * w),
+            2.0 * (y * z - x * w),
+            1.0 - 2.0 * (x * x + y * y),
+        ],
+        position: [0.0; 3],
+    }
+}
+
+/// Angle, in degrees, between two rotation matrices.
+fn angle_between(a: &Matrix, b: &Matrix) -> f32 {
+    let trace: f32 = [(a.right, b.right), (a.up, b.up), (a.at, b.at)]
+        .iter()
+        .map(|(u, v)| u[0] * v[0] + u[1] * v[1] + u[2] * v[2])
+        .sum();
+    ((trace - 1.0) / 2.0).clamp(-1.0, 1.0).acos().to_degrees()
+}
+
+/// run_player drives the bones of player.dff by their HAnim IDs, and its
+/// stored quaternions are the inverse of the bone rotations: their conjugate
+/// is close to the bind pose for the trunk and the head.
+#[test]
+fn run_player_drives_tommy_skeleton() {
+    let Some(vice_city) = game_dir(Game::ViceCity) else {
+        return;
+    };
+    let ped =
+        ifp::parse_ifp(&std::fs::read(vice_city.join("anim").join("ped.ifp")).unwrap()).unwrap();
+    let run = ped.find("run_player").unwrap();
+    assert_eq!(run.objects.len(), 22);
+    assert!((run.duration() - 0.6667).abs() < 1e-3, "{}", run.duration());
+
+    let clump = player(&vice_city);
+    for object in &run.objects {
+        let id = object.bone_id.unwrap();
+        let frame = clump
+            .frames
+            .iter()
+            .find(|frame| frame.hanim.as_ref().is_some_and(|h| h.node_id == id))
+            .unwrap_or_else(|| panic!("os {id} absent de player.dff"));
+        assert_eq!(frame.name.as_deref(), Some(object.name.as_str()));
+
+        if ["Pelvis", "Neck", "Head"].contains(&object.name.as_str()) {
+            let keyframe = object.keyframes[0];
+            let stored = angle_between(&frame.transform, &quaternion_matrix(keyframe.rotation));
+            let local = angle_between(
+                &frame.transform,
+                &quaternion_matrix(keyframe.local_rotation()),
+            );
+            assert!(
+                local < 10.0 && local < stored,
+                "{} : {local} / {stored}",
+                object.name
+            );
+        }
+    }
 }

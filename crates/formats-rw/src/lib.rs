@@ -6,6 +6,7 @@
 //! in `docs/formats/`, with the fields that were checked on real files.
 
 pub mod dff;
+pub mod ifp;
 pub mod img;
 pub mod rw;
 pub mod txd;
