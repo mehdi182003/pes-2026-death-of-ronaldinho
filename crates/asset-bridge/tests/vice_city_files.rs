@@ -558,3 +558,28 @@ fn sound_bank_is_consistent() {
         assert!((0.05..3.0).contains(&entries[index].duration()));
     }
 }
+
+#[test]
+fn weapon_dat_describes_the_colt45() {
+    let Some(vice_city) = game_dir(Game::ViceCity) else {
+        return;
+    };
+    let bytes = std::fs::read(vice_city.join("data").join("weapon.dat")).unwrap();
+    let weapons =
+        formats_rw::weapon_dat::parse_weapon_dat(&String::from_utf8_lossy(&bytes)).unwrap();
+    let colt = weapons.iter().find(|w| w.name == "Colt45").unwrap();
+    assert_eq!(colt.fire_type, "INSTANT_HIT");
+    assert_eq!(colt.range, 30.0);
+    assert_eq!(colt.fire_offset, [0.30, 0.0, 0.09]);
+    assert_eq!(colt.anim_group, "colt45");
+    assert_eq!(colt.anim_loop, [11.0, 18.0, 14.0]);
+    assert_eq!(colt.model_id, 274);
+    // Its animation group names an IFP of gta3.img holding colt45_fire.
+    let mut archive = open_gta3(&vice_city);
+    let entry = archive.find("colt45.ifp").unwrap().clone();
+    let package = ifp::parse_ifp(&archive.read(&entry).unwrap()).unwrap();
+    let fire = package.find("colt45_fire").unwrap();
+    // The firing point lies inside the animation (30 frames per second).
+    assert!(colt.anim_loop[2] / 30.0 < fire.duration());
+    assert!(weapons.iter().any(|w| w.name == "Uzi") && weapons.iter().any(|w| w.name == "m4"));
+}
