@@ -12,6 +12,7 @@ use formats_rw::dff::{self, Clump, Matrix};
 use formats_rw::ifp;
 use formats_rw::img::{DIR_ENTRY_SIZE, DirEntry, ImgArchive};
 use formats_rw::rw::{self, Version};
+use formats_rw::sfx::SoundBank;
 use formats_rw::txd::{self, raster_format};
 
 fn open_gta3(vice_city: &Path) -> ImgArchive {
@@ -526,4 +527,34 @@ fn run_player_binds_to_the_player_model() {
 
     // Weapon animations live in gta3.img.
     assert!(!game.load_animations("colt45").unwrap().is_empty());
+}
+
+/// The sound bank: its table covers the RAW file exactly, sound after sound.
+#[test]
+fn sound_bank_is_consistent() {
+    let Some(vice_city) = game_dir(Game::ViceCity) else {
+        return;
+    };
+    let (sdt, raw) = asset_bridge::vice_city::sound_bank_paths(&vice_city).unwrap();
+    let mut bank = SoundBank::open(&sdt, &raw).unwrap();
+    let entries = bank.entries().to_vec();
+    assert_eq!(entries.len(), 9941);
+    assert_eq!(entries[0].offset, 0);
+    assert!(
+        entries
+            .windows(2)
+            .all(|pair| pair[0].offset + pair[0].size == pair[1].offset)
+    );
+    let last = entries.last().unwrap();
+    let raw_len = std::fs::metadata(&raw).unwrap().len();
+    assert_eq!(u64::from(last.offset + last.size), raw_len);
+    // From 2000 Hz (39 sounds below 8000 Hz) to 44100 Hz.
+    assert!(entries.iter().all(|entry| entry.sample_rate > 0));
+
+    // Sounds 50 and 51: "fire Pistol" in the GTAMods list.
+    for index in [50, 51] {
+        let samples = bank.read_samples(index).unwrap();
+        assert_eq!(samples.len(), entries[index].size as usize / 2);
+        assert!((0.05..3.0).contains(&entries[index].duration()));
+    }
 }

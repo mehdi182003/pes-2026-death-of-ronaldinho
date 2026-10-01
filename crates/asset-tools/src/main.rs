@@ -6,9 +6,11 @@ use std::process::ExitCode;
 use anyhow::{Context, Result};
 use asset_bridge::cache;
 use asset_bridge::config::{self, Game};
+use asset_bridge::vice_city;
 use asset_tools::dump;
 use asset_tools::source::{self, Source};
 use clap::{Parser, Subcommand};
+use formats_rw::sfx::{self, SoundBank};
 
 #[derive(Parser)]
 #[command(
@@ -34,6 +36,10 @@ enum Command {
     #[command(subcommand)]
     Img(ImgCommand),
 
+    /// Banque de sons audio/sfx.SDT et sfx.RAW de Vice City.
+    #[command(subcommand)]
+    Sfx(SfxCommand),
+
     /// Dump hexadécimal annoté : arbre des chunks pour un fichier RenderWare (DFF, TXD).
     Dump {
         /// Fichier à lire, ou vc:<nom> pour une entrée de models/gta3.img (ex. vc:player.dff).
@@ -50,6 +56,31 @@ enum Command {
         /// Mode brut : offset du premier octet affiché.
         #[arg(long, default_value_t = 0)]
         offset: usize,
+    },
+}
+
+#[derive(Subcommand)]
+enum SfxCommand {
+    /// Liste les sons : numéro, fréquence, durée.
+    List {
+        /// Premier numéro affiché.
+        #[arg(long, default_value_t = 0)]
+        from: usize,
+
+        /// Nombre de sons affichés.
+        #[arg(long, default_value_t = 100)]
+        count: usize,
+    },
+
+    /// Exporte des sons en WAV, par défaut dans le dossier de cache.
+    Export {
+        /// Numéros des sons (par exemple 50 51).
+        #[arg(required = true)]
+        indices: Vec<usize>,
+
+        /// Dossier de destination (par défaut : dossier de cache de Chaos FC).
+        #[arg(long)]
+        out: Option<PathBuf>,
     },
 }
 
@@ -82,6 +113,10 @@ fn main() -> ExitCode {
         Command::Img(ImgCommand::List { filter }) => img_list(&config_file, filter.as_deref()),
         Command::Img(ImgCommand::Extract { names, out }) => {
             img_extract(&config_file, &names, out.as_deref())
+        }
+        Command::Sfx(SfxCommand::List { from, count }) => sfx_list(&config_file, from, count),
+        Command::Sfx(SfxCommand::Export { indices, out }) => {
+            sfx_export(&config_file, &indices, out.as_deref())
         }
         Command::Dump {
             source,
@@ -194,5 +229,46 @@ fn dump_source(
         (start + max_bytes).min(data.len())
     };
     print!("{}", dump::hex(&data[start..end], start, ""));
+    Ok(ExitCode::SUCCESS)
+}
+
+fn open_sound_bank(config_file: &Path) -> Result<SoundBank> {
+    let vice_city = config::read_paths(config_file)?.check(Game::ViceCity)?;
+    let (sdt, raw) = vice_city::sound_bank_paths(&vice_city)
+        .context("audio/sfx.SDT ou audio/sfx.RAW introuvable dans l'installation de Vice City")?;
+    Ok(SoundBank::open(&sdt, &raw)?)
+}
+
+fn sfx_list(config_file: &Path, from: usize, count: usize) -> Result<ExitCode> {
+    let bank = open_sound_bank(config_file)?;
+    println!("{:>6} {:>9} {:>9}", "numéro", "Hz", "durée (s)");
+    for (index, entry) in bank.entries().iter().enumerate().skip(from).take(count) {
+        println!(
+            "{index:>6} {:>9} {:>9.3}",
+            entry.sample_rate,
+            entry.duration()
+        );
+    }
+    println!("{} sons dans la banque", bank.entries().len());
+    Ok(ExitCode::SUCCESS)
+}
+
+fn sfx_export(config_file: &Path, indices: &[usize], out: Option<&Path>) -> Result<ExitCode> {
+    let out = match out {
+        Some(dir) => dir.to_path_buf(),
+        None => cache::extraction_dir(Game::ViceCity)
+            .context("dossier de cache introuvable : précisez --out")?
+            .join("sfx"),
+    };
+    std::fs::create_dir_all(&out).with_context(|| format!("création de {}", out.display()))?;
+    let mut bank = open_sound_bank(config_file)?;
+    for &index in indices {
+        let samples = bank.read_samples(index)?;
+        let sample_rate = bank.entries()[index].sample_rate;
+        let path = out.join(format!("sfx_{index:04}.wav"));
+        std::fs::write(&path, sfx::wav_bytes(sample_rate, &samples))
+            .with_context(|| format!("écriture de {}", path.display()))?;
+        println!("{}", path.display());
+    }
     Ok(ExitCode::SUCCESS)
 }

@@ -122,6 +122,30 @@ impl ViceCity {
     }
 }
 
+/// Paths of the sound bank `audio/sfx.SDT` and `audio/sfx.RAW` of the install
+/// `root`. Names are matched ignoring case (the install has `Audio/sfx.RAW`).
+pub fn sound_bank_paths(root: &Path) -> Option<(PathBuf, PathBuf)> {
+    let audio = find_ignoring_case(root, "audio")?;
+    Some((
+        find_ignoring_case(&audio, "sfx.sdt")?,
+        find_ignoring_case(&audio, "sfx.raw")?,
+    ))
+}
+
+/// Entry of `dir` named `name`, ignoring case.
+fn find_ignoring_case(dir: &Path, name: &str) -> Option<PathBuf> {
+    std::fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .find(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .eq_ignore_ascii_case(name)
+        })
+        .map(|entry| entry.path())
+}
+
 /// Decodes every texture of a TXD file. `name` is used in error messages.
 pub fn decode_txd(name: &str, bytes: &[u8]) -> Result<Vec<Texture>, ViceCityError> {
     let dictionary = txd::parse_txd(bytes).map_err(|source| ViceCityError::Format {
