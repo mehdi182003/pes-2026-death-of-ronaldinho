@@ -61,6 +61,14 @@ Vérifications faites à chaque lecture, vraies sur les 751 modèles : les indic
 
 11 modèles utilisent les codes `08` ou `11`, encore inconnus : ils sont refusés avec une erreur.
 
+## Squelette
+
+Juste après le programme de dessin (offset donné par le u32 à l'offset 4) : un nombre d'os (u32), puis par os 6 × f32 (trois angles en radians, autour de X, Y et Z, puis une translation), puis les parents (i16 par os, −1 pour la racine). Vérifié sur les 762 modèles : 700 n'ont pas d'os ; les 26 corps de joueurs et d'arbitres en ont 19, avec les parents `−1, 0, 1, 1, 2, 3, 0, 6, 6, 7, 8, 6, 4, 5, 9, 10, 11, 14, 15`.
+
+Chaque os donne le passage de l'espace du modèle à celui de l'os : un point `p` du modèle est en `R·p + t` pour l'os. L'articulation est donc en `−Rᵀ·t`.
+
+HYPOTHÈSE : `R = Ry·Rz·Rx`. Avec cet ordre, les articulations des bras (épaules à ±80,8, coudes à ±205,8, poignets à ±297,3, toutes à 602,7 de haut) et de la tête (670,6) tombent où le maillage les attend, et une tête se fixe à l'endroit. Celles des jambes et du dos ne tombent pas encore juste, quel que soit l'ordre : à reprendre au jalon J6.
+
 ## Repère et échelle
 
 - Y vers le haut, pieds à Y = 0 ; les bras d'un personnage en T s'étendent le long de X.
@@ -72,11 +80,18 @@ Vérifications faites à chaque lecture, vraies sur les 751 modèles : les indic
 | Numéro | Contenu |
 | --- | --- |
 | 431 | arbitre complet (corps et tête), 1796 sommets ; texture n° 432 (512 × 256), variantes 433 et 434 |
-| 1064, 1104, 1105, 1108, 1110, 1111 | corps de joueur en T, sans tête, 39 parties, 5 niveaux de détail ; textures non trouvées (les maillots de la démo sont chiffrés) |
-| 1943 et voisins | tête : 2 modèles (tête, cheveux ?) et une texture de visage |
+| 1064, 1104, 1105, 1108, 1110, 1111 | corps de joueur en T, sans tête, 19 os, 39 parties, 5 niveaux de détail. Les maillots de la démo sont chiffrés ; la chasuble d'entraînement 296/1/0 (512 × 256 : chasuble, short, chaussettes, chaussures) s'y applique |
+| 1943 et voisins | tête : 2 modèles (tête, cheveux ?) et une texture de visage ; se place sur l'os 16 du corps |
+| 417 à 419 | présentatrice des menus (veste, visage, cheveux) |
 
 ## Fichiers testés
 
 `crates/asset-bridge/tests/pes6_files.rs` : `models_parse_with_consistent_draws` (tous les modèles de `0_text.afs`) et `referee_loads_textured_at_a_plausible_size`.
 
-Pour voir un modèle : `cargo run -p asset-tools --bin viewer -- player --pes 0_text:431 --pes-texture 0_text:432`.
+Test `player_body_gets_its_head_on_the_shoulders` : la tête se place au-dessus du cou.
+
+Pour voir un joueur à côté de Tommy :
+
+```sh
+cargo run -p asset-tools --bin viewer -- player --pes 0_text:1064 --pes-texture 0_text:296/1/0 --pes-head 0_text:1943
+```
