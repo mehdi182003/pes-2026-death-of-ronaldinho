@@ -104,6 +104,14 @@ La crate game n'importe jamais formats-rw ni formats-pes directement. Changer de
 - Les fichiers extraits vont dans `%LOCALAPPDATA%\chaos-fc\extracted\<jeu>` (équivalents macOS/Linux dans `asset_bridge::cache`).
 - Les tests sur vrais fichiers vivent dans `crates/asset-bridge/tests/` et commencent par `asset_bridge::testing::game_dir(...)`, qui les ignore si le jeu n'est pas configuré.
 
+**Décisions (J2) :**
+
+- Un modèle utilise le TXD du même nom (`player.dff` → `player.txd`). La vraie association est décrite dans les fichiers IDE du jeu ; on ne les lira que si un modèle s'en écarte.
+- Les animations neutres (`asset_bridge::model::Animation`) contiennent des rotations **locales** : le parser IFP fournit le quaternion stocké, et `asset-bridge` prend son conjugué (voir `docs/formats/ifp.md`). Une piste retrouve son os par identifiant HAnim, sinon par nom.
+- Les animations de Vice City mettent le personnage debout le long de +Z, alors que la pose de liaison est le long de +Y ; le visualiseur tourne l'affichage en conséquence. Le déplacement de la racine (4,3 m par cycle de `run_player`) est retiré pour une boucle sur place.
+- La pose de liaison des os vient de l'inverse des matrices inverses de liaison du skin, pas des frames, car quelques modèles ont des frames hors pose de liaison.
+- Seul le premier niveau de mipmap des textures est utilisé pour l'instant.
+
 ```text
 chaos-fc/
 ├── Cargo.toml            (workspace)
@@ -137,6 +145,8 @@ Côté Vice City, les formats sont documentés depuis vingt ans et il suffit de 
 Références : le wiki GTAMods (pages RenderWare, DFF, TXD, IFP, IMG), librw et OpenRW pour comparer une implémentation existante.
 
 **Constats (J1)**, détaillés dans `docs/formats/` : les 4617 DFF de `gta3.img` mélangent trois versions de RenderWare (3.4.0.3, 3.3.0.2, 3.2.0.0) ; le modèle de Tommy (`player.dff`) est en 3.3.0.2, pas en 3.4.0.3. Certaines pages du wiki sont fausses (taille d'une frame) : seule la vérification sur les vrais fichiers fait foi.
+
+**Constats (J2)** : les TXD sont en DXT1/DXT3 pour l'essentiel (plus quelques palettes 8 bits), avec un en-tête de 88 octets. `anim/ped.ifp` contient 234 animations, dont `run_player`. Le wiki se trompe aussi sur l'IFP : la section INFO ne contient pas les animations, chaque image clé a son temps, et le 4ᵉ entier de la section ANIM est l'identifiant d'os.
 
 ### PES 6 (version PC)
 

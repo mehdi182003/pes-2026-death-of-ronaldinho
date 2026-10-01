@@ -33,6 +33,8 @@ cargo run -p asset-tools -- check-config        # vérifie les chemins sans comp
 cargo run -p asset-tools -- img list --filter player   # contenu de models/gta3.img de Vice City
 cargo run -p asset-tools -- dump vc:player.dff       # dump annoté d'un fichier RenderWare
 cargo run -p asset-tools --bin viewer -- player      # visualiseur de modèles (Bevy)
+cargo run -p asset-tools --bin viewer -- player --anim run_player   # animation en boucle
+cargo run -p asset-tools --bin viewer -- --textures vc:player.txd     # textures d'un TXD à plat
 ```
 
 La variable d'environnement `CHAOS_FC_CONFIG` permet d'utiliser un autre fichier de configuration que `./config.toml`.

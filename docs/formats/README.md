@@ -22,6 +22,8 @@ cargo run -p asset-tools -- img list --filter player      # contenu de models/gt
 cargo run -p asset-tools -- img extract player.dff        # copie dans le dossier de cache
 cargo run -p asset-tools -- dump vc:player.dff             # dump annoté (arbre des chunks RenderWare)
 cargo run -p asset-tools --bin viewer -- player            # visualiseur 3D (validation à l'œil)
+cargo run -p asset-tools --bin viewer -- player --anim run_player   # animation
+cargo run -p asset-tools --bin viewer -- --textures vc:player.txd     # textures à plat
 ```
 
 Les fichiers extraits vont dans le dossier de cache de l'utilisateur (`%LOCALAPPDATA%\chaos-fc\extracted\` sous Windows), jamais dans le dépôt. On peut les ouvrir dans ImHex.

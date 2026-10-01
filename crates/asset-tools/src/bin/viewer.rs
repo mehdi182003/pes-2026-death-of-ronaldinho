@@ -1,8 +1,10 @@
-//! Asset viewer: shows a textured Vice City model in its bind pose (T-pose
-//! for a character), or the textures of a TXD laid flat.
+//! Asset viewer: shows a textured Vice City model, in its bind pose (T-pose
+//! for a character) or playing an animation in a loop, or the textures of a
+//! TXD laid flat.
 //!
 //! ```sh
 //! cargo run -p asset-tools --bin viewer -- player
+//! cargo run -p asset-tools --bin viewer -- player --anim run_player
 //! cargo run -p asset-tools --bin viewer -- --textures D:\ViceCity\txd\LOADSC0.TXD
 //! ```
 
@@ -10,23 +12,26 @@ use std::collections::HashMap;
 use std::f32::consts::FRAC_PI_2;
 use std::path::PathBuf;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use asset_bridge::config::{self, Game};
-use asset_bridge::model::{self as neutral, Model, Texture};
+use asset_bridge::model::{self as neutral, Animation, Model, Texture, Track};
 use asset_bridge::vice_city::{self, ViceCity, ViceCityError};
 use asset_tools::source::Source;
 use bevy::asset::RenderAssetUsages;
+use bevy::camera::visibility::NoFrustumCulling;
 use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
-use bevy::mesh::{Indices, PrimitiveTopology};
+use bevy::mesh::skinning::{SkinnedMesh, SkinnedMeshInverseBindposes};
+use bevy::mesh::{Indices, PrimitiveTopology, VertexAttributeValues};
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+use bevy::transform::TransformSystems;
 use clap::Parser;
 
 #[derive(Parser)]
 #[command(
     name = "viewer",
-    about = "Visualiseur de modèles et de textures de GTA Vice City"
+    about = "Visualiseur de modèles, d'animations et de textures de GTA Vice City"
 )]
 struct Args {
     /// Modèle de models/gta3.img, par exemple player ou colt45.
@@ -36,6 +41,14 @@ struct Args {
     /// Dictionnaire de textures du modèle (par défaut : celui du même nom).
     #[arg(long)]
     txd: Option<String>,
+
+    /// Animation à jouer en boucle, par exemple run_player.
+    #[arg(long, conflicts_with = "textures")]
+    anim: Option<String>,
+
+    /// Paquet d'animations : ped (anim/ped.ifp, par défaut) ou un IFP de gta3.img.
+    #[arg(long, default_value = "ped")]
+    anim_package: String,
 
     /// Affiche à plat les textures d'un TXD : vc:<nom> ou chemin d'un fichier.
     #[arg(long, conflicts_with = "model")]
@@ -55,11 +68,17 @@ fn main() -> AppExit {
             return AppExit::error();
         }
     };
+    let title = match &scene.animation {
+        Some(animation) => format!("{} - {}", scene.model.name, animation.name),
+        None => scene.model.name.clone(),
+    };
+    // Animations stand the character along +Z, the bind pose along +Y.
+    let z_up = scene.animation.is_some();
 
     App::new()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
-                title: format!("Chaos FC - visualiseur - {}", scene.model.name),
+                title: format!("Chaos FC - visualiseur - {title}"),
                 ..default()
             }),
             ..default()
@@ -74,13 +93,18 @@ fn main() -> AppExit {
             skeleton: true,
             mesh: true,
             grid: true,
-            z_up: false,
+            z_up,
+            playing: true,
         })
+        .insert_resource(Playback { time: 0.0 })
         .add_systems(Startup, setup)
         .add_systems(
             Update,
-            (handle_keys, orbit_camera, draw_gizmos, update_help).chain(),
+            (handle_keys, animate, orbit_camera, update_help).chain(),
         )
+        // After transform propagation, so that the skeleton follows the
+        // skinned mesh of the same frame.
+        .add_systems(PostUpdate, draw_gizmos.after(TransformSystems::Propagate))
         .run()
 }
 
@@ -89,7 +113,7 @@ fn load(args: &Args) -> Result<ViewerScene> {
     if let Some(source) = &args.textures {
         let textures = vice_city::decode_txd(&source.label(), &source.read(&config_file)?)?;
         let board = texture_board(&source.label(), &textures);
-        return Ok(ViewerScene::new(board, textures, true, None));
+        return Ok(ViewerScene::new(board, textures, true, None, None));
     }
 
     let name = args.model.as_deref().expect("clap requires a model");
@@ -106,7 +130,18 @@ fn load(args: &Args) -> Result<ViewerScene> {
         Err(ViceCityError::NotFound(file)) => (Vec::new(), Some(format!("{file} introuvable"))),
         Err(err) => return Err(err.into()),
     };
-    Ok(ViewerScene::new(model, textures, false, note))
+    let animation = match &args.anim {
+        Some(wanted) => {
+            let animations = game.load_animations(&args.anim_package)?;
+            let animation = animations
+                .into_iter()
+                .find(|animation| animation.name.eq_ignore_ascii_case(wanted))
+                .with_context(|| format!("{wanted} absente de {}", args.anim_package))?;
+            Some(animation)
+        }
+        None => None,
+    };
+    Ok(ViewerScene::new(model, textures, false, note, animation))
 }
 
 /// Lays textures side by side on upright quads one metre high, so that they
@@ -165,31 +200,55 @@ struct ViewerScene {
     flat: bool,
     /// Shown in the help, e.g. a missing texture dictionary.
     note: Option<String>,
-    /// World matrix of each node of the model.
-    node_world: Vec<Mat4>,
-    /// Bind-pose position of each bone, and its parent bone.
-    bones: Vec<(Vec3, Option<usize>)>,
+    animation: Option<Animation>,
+    /// Node driven by each track of the animation.
+    track_nodes: Vec<Option<usize>>,
+    /// Move of the root bone over the animation, removed to run in place.
+    root_drift: Option<(usize, Vec3)>,
+    /// Transform of each node relative to its parent, in the bind pose.
+    bind_locals: Vec<Mat4>,
+    /// For each bone of the skeleton: its node and its parent bone.
+    bones: Vec<(usize, Option<usize>)>,
     /// Bounds of the vertices, in model space.
     min: Vec3,
     max: Vec3,
 }
 
 impl ViewerScene {
-    fn new(model: Model, textures: Vec<Texture>, flat: bool, note: Option<String>) -> Self {
-        let mut node_world: Vec<Mat4> = Vec::with_capacity(model.nodes.len());
-        for node in &model.nodes {
-            let local = Mat4::from_cols_array(&node.local);
-            let world = match node.parent {
-                Some(parent) => node_world[parent] * local,
-                None => local,
+    fn new(
+        model: Model,
+        textures: Vec<Texture>,
+        flat: bool,
+        note: Option<String>,
+        animation: Option<Animation>,
+    ) -> Self {
+        // Bind pose: a bone sits where the inverse of its inverse bind matrix
+        // puts it (the frames of a few models are not in bind pose); other
+        // nodes keep their frame.
+        let bone_of_node = |node: usize| {
+            model
+                .skeleton
+                .as_ref()
+                .and_then(|skeleton| skeleton.bones.iter().position(|b| b.node == node))
+        };
+        let mut bind_world: Vec<Mat4> = Vec::with_capacity(model.nodes.len());
+        let mut bind_locals = Vec::with_capacity(model.nodes.len());
+        for (index, node) in model.nodes.iter().enumerate() {
+            let parent_world = node.parent.map_or(Mat4::IDENTITY, |p| bind_world[p]);
+            let world = match (bone_of_node(index), &model.skeleton) {
+                (Some(bone), Some(skeleton)) => {
+                    Mat4::from_cols_array(&skeleton.bones[bone].inverse_bind).inverse()
+                }
+                _ => parent_world * Mat4::from_cols_array(&node.local),
             };
-            node_world.push(world);
+            bind_locals.push(parent_world.inverse() * world);
+            bind_world.push(world);
         }
 
         let (mut min, mut max) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
         for mesh in &model.meshes {
             for &position in &mesh.positions {
-                let point = node_world[mesh.node].transform_point3(Vec3::from_array(position));
+                let point = bind_world[mesh.node].transform_point3(Vec3::from_array(position));
                 min = min.min(point);
                 max = max.max(point);
             }
@@ -198,16 +257,10 @@ impl ViewerScene {
             (min, max) = (Vec3::ZERO, Vec3::ZERO);
         }
 
-        // The bind pose of a bone is the inverse of its inverse bind matrix.
-        // Its parent is the closest ancestor node that is also a bone.
+        // Parent bone: the closest ancestor node that is also a bone.
         let mut bones = Vec::new();
         if let Some(skeleton) = &model.skeleton {
-            let bone_of_node = |node: usize| skeleton.bones.iter().position(|b| b.node == node);
             for bone in &skeleton.bones {
-                let position = Mat4::from_cols_array(&bone.inverse_bind)
-                    .inverse()
-                    .w_axis
-                    .truncate();
                 let mut parent = model.nodes[bone.node].parent;
                 let parent_bone = loop {
                     match parent {
@@ -218,29 +271,88 @@ impl ViewerScene {
                         None => break None,
                     }
                 };
-                bones.push((position, parent_bone));
+                bones.push((bone.node, parent_bone));
             }
         }
+
+        let track_nodes: Vec<Option<usize>> = animation
+            .iter()
+            .flat_map(|animation| &animation.tracks)
+            .map(|track| track.node_in(&model))
+            .collect();
+        // The root bone is the first bone of the hierarchy.
+        let root_drift = animation.as_ref().and_then(|animation| {
+            let root = model.skeleton.as_ref()?.bones.first()?.node;
+            let track = track_nodes.iter().position(|&node| node == Some(root))?;
+            let keys = &animation.tracks[track].keys;
+            let first = Vec3::from_array(keys.first()?.translation?);
+            let last = Vec3::from_array(keys.last()?.translation?);
+            Some((track, last - first))
+        });
 
         Self {
             model,
             textures,
             flat,
             note,
-            node_world,
+            animation,
+            track_nodes,
+            root_drift,
+            bind_locals,
             bones,
             min,
             max,
         }
     }
 
-    /// Bounds once the model is turned as displayed.
+    /// Local transform of every node at time `t`: the bind pose, overridden
+    /// by the animation.
+    fn pose(&self, t: f32) -> Vec<Transform> {
+        let mut locals: Vec<Transform> = self
+            .bind_locals
+            .iter()
+            .map(|&local| Transform::from_matrix(local))
+            .collect();
+        if let Some(animation) = &self.animation {
+            for (index, (track, node)) in animation.tracks.iter().zip(&self.track_nodes).enumerate()
+            {
+                if let Some(node) = node {
+                    let drift = self
+                        .root_drift
+                        .filter(|&(root, _)| root == index)
+                        .map(|(_, drift)| drift * (t / animation.duration.max(1e-3)));
+                    apply_sample(&mut locals[*node], track, t, drift);
+                }
+            }
+        }
+        locals
+    }
+
+    /// Bounds of what is displayed: the vertices in the bind pose, or the
+    /// bones over the whole animation (plus a margin for the flesh around
+    /// them).
     fn displayed_bounds(&self, root: &Transform) -> (Vec3, Vec3) {
         let (mut min, mut max) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
+        let root = root.to_matrix();
+        if let Some(animation) = &self.animation {
+            for step in 0..16 {
+                let locals = self.pose(animation.duration * step as f32 / 16.0);
+                let mut world: Vec<Mat4> = Vec::with_capacity(locals.len());
+                for (node, local) in self.model.nodes.iter().zip(&locals) {
+                    let parent = node.parent.map_or(root, |p| world[p]);
+                    let matrix = parent * local.to_matrix();
+                    let point = matrix.w_axis.truncate();
+                    min = min.min(point);
+                    max = max.max(point);
+                    world.push(matrix);
+                }
+            }
+            return (min - Vec3::splat(0.15), max + Vec3::splat(0.15));
+        }
         for x in [self.min.x, self.max.x] {
             for y in [self.min.y, self.max.y] {
                 for z in [self.min.z, self.max.z] {
-                    let corner = root.transform_point(Vec3::new(x, y, z));
+                    let corner = root.transform_point3(Vec3::new(x, y, z));
                     min = min.min(corner);
                     max = max.max(corner);
                 }
@@ -250,14 +362,52 @@ impl ViewerScene {
     }
 }
 
+/// Sets the transform of a bone from its track at time `t`: interpolated
+/// between the two surrounding keys. `drift` is subtracted from the
+/// translation (root motion removed).
+fn apply_sample(transform: &mut Transform, track: &Track, t: f32, drift: Option<Vec3>) {
+    let keys = &track.keys;
+    let Some(last) = keys.len().checked_sub(1) else {
+        return;
+    };
+    let next = keys
+        .iter()
+        .position(|key| key.time > t)
+        .unwrap_or(keys.len());
+    let (a, b, s) = match next {
+        0 => (0, 0, 0.0),
+        n if n > last => (last, last, 0.0),
+        n => {
+            let span = keys[n].time - keys[n - 1].time;
+            let s = if span > 0.0 {
+                (t - keys[n - 1].time) / span
+            } else {
+                0.0
+            };
+            (n - 1, n, s)
+        }
+    };
+    let rotation = |i: usize| Quat::from_array(keys[i].rotation).normalize();
+    transform.rotation = rotation(a).slerp(rotation(b), s);
+    if let (Some(from), Some(to)) = (keys[a].translation, keys[b].translation) {
+        let translation = Vec3::from_array(from).lerp(Vec3::from_array(to), s);
+        transform.translation = translation - drift.unwrap_or(Vec3::ZERO);
+    }
+    if let (Some(from), Some(to)) = (keys[a].scale, keys[b].scale) {
+        transform.scale = Vec3::from_array(from).lerp(Vec3::from_array(to), s);
+    }
+}
+
 #[derive(Resource)]
 struct Options {
     skeleton: bool,
     mesh: bool,
     grid: bool,
-    /// The file stands along +Z (world objects) rather than +Y (characters
-    /// in bind pose): turn it so that it stands up in the viewer.
+    /// What is shown stands along +Z (world objects, animated characters)
+    /// rather than +Y (characters in bind pose): turn it so that it stands
+    /// up in the viewer.
     z_up: bool,
+    playing: bool,
 }
 
 impl Options {
@@ -269,6 +419,16 @@ impl Options {
         }
     }
 }
+
+#[derive(Resource)]
+struct Playback {
+    /// Seconds into the animation.
+    time: f32,
+}
+
+/// Entity of each node of the model.
+#[derive(Resource)]
+struct NodeEntities(Vec<Entity>);
 
 #[derive(Component)]
 struct ModelRoot;
@@ -309,6 +469,7 @@ fn setup(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
+    mut bindposes: ResMut<Assets<SkinnedMeshInverseBindposes>>,
 ) {
     // Materials name their texture; the game ignores case.
     let textures: HashMap<String, (Handle<Image>, bool)> = scene
@@ -324,6 +485,31 @@ fn setup(
     let root = commands
         .spawn((ModelRoot, root_transform, Visibility::default()))
         .id();
+
+    // One entity per node, in the bind pose; the animation moves them.
+    let mut nodes: Vec<Entity> = Vec::with_capacity(scene.model.nodes.len());
+    for (node, local) in scene.model.nodes.iter().zip(&scene.bind_locals) {
+        let parent = node.parent.map_or(root, |p| nodes[p]);
+        nodes.push(
+            commands
+                .spawn((
+                    Transform::from_matrix(*local),
+                    Visibility::default(),
+                    ChildOf(parent),
+                ))
+                .id(),
+        );
+    }
+    let skin = scene.model.skeleton.as_ref().map(|skeleton| SkinnedMesh {
+        inverse_bindposes: bindposes.add(SkinnedMeshInverseBindposes::from(
+            skeleton
+                .bones
+                .iter()
+                .map(|bone| Mat4::from_cols_array(&bone.inverse_bind))
+                .collect::<Vec<_>>(),
+        )),
+        joints: skeleton.bones.iter().map(|bone| nodes[bone.node]).collect(),
+    });
 
     for mesh in &scene.model.meshes {
         for primitive in &mesh.primitives {
@@ -350,6 +536,14 @@ fn setup(
                     .collect();
                 bevy_mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, linear);
             }
+            let skinned = mesh.skin.as_ref().zip(skin.as_ref());
+            if let Some((mesh_skin, _)) = skinned {
+                bevy_mesh.insert_attribute(
+                    Mesh::ATTRIBUTE_JOINT_INDEX,
+                    VertexAttributeValues::Uint16x4(mesh_skin.joints.clone()),
+                );
+                bevy_mesh.insert_attribute(Mesh::ATTRIBUTE_JOINT_WEIGHT, mesh_skin.weights.clone());
+            }
 
             let [r, g, b, a] = primitive.material.base_color;
             let texture = primitive
@@ -373,14 +567,19 @@ fn setup(
                 },
                 ..default()
             };
-            commands.spawn((
+            let mut entity = commands.spawn((
                 Mesh3d(meshes.add(bevy_mesh)),
                 MeshMaterial3d(materials.add(material)),
-                Transform::from_matrix(scene.node_world[mesh.node]),
-                ChildOf(root),
             ));
+            match skinned {
+                // Skinned vertices follow the joints; the bounds computed
+                // from the bind pose would wrongly cull the animated mesh.
+                Some((_, skin)) => entity.insert((skin.clone(), NoFrustumCulling, ChildOf(root))),
+                None => entity.insert((Transform::IDENTITY, ChildOf(nodes[mesh.node]))),
+            };
         }
     }
+    commands.insert_resource(NodeEntities(nodes));
 
     let (min, max) = scene.displayed_bounds(&root_transform);
     let orbit = Orbit::framing(min, max);
@@ -445,6 +644,9 @@ fn handle_keys(
     if keys.just_pressed(KeyCode::KeyG) {
         options.grid = !options.grid;
     }
+    if keys.just_pressed(KeyCode::Space) && scene.animation.is_some() {
+        options.playing = !options.playing;
+    }
     if keys.just_pressed(KeyCode::KeyV) {
         options.mesh = !options.mesh;
         for mut visibility in &mut meshes {
@@ -466,6 +668,28 @@ fn handle_keys(
         let (min, max) = scene.displayed_bounds(&options.root_transform());
         for mut orbit in &mut cameras {
             *orbit = Orbit::framing(min, max);
+        }
+    }
+}
+
+/// Plays the animation in a loop, in place.
+fn animate(
+    time: Res<Time>,
+    scene: Res<ViewerScene>,
+    options: Res<Options>,
+    mut playback: ResMut<Playback>,
+    nodes: Res<NodeEntities>,
+    mut transforms: Query<&mut Transform, (Without<ModelRoot>, Without<Orbit>)>,
+) {
+    let Some(animation) = &scene.animation else {
+        return;
+    };
+    if options.playing {
+        playback.time = (playback.time + time.delta_secs()) % animation.duration.max(1e-3);
+    }
+    for (node, local) in scene.pose(playback.time).into_iter().enumerate() {
+        if let Ok(mut transform) = transforms.get_mut(nodes.0[node]) {
+            *transform = local;
         }
     }
 }
@@ -493,11 +717,16 @@ fn orbit_camera(
     *transform = orbit.transform();
 }
 
-fn draw_gizmos(mut gizmos: Gizmos, scene: Res<ViewerScene>, options: Res<Options>) {
-    let root = options.root_transform();
+fn draw_gizmos(
+    mut gizmos: Gizmos,
+    scene: Res<ViewerScene>,
+    options: Res<Options>,
+    nodes: Option<Res<NodeEntities>>,
+    globals: Query<&GlobalTransform>,
+) {
     if options.grid {
         // Floor under the feet, cells of 25 cm.
-        let (min, max) = scene.displayed_bounds(&root);
+        let (min, max) = scene.displayed_bounds(&options.root_transform());
         let center = (min + max) / 2.0;
         gizmos.grid(
             Isometry3d::new(
@@ -509,17 +738,24 @@ fn draw_gizmos(mut gizmos: Gizmos, scene: Res<ViewerScene>, options: Res<Options
             Color::srgba(1.0, 1.0, 1.0, 0.15),
         );
     }
+    let Some(nodes) = nodes else {
+        return;
+    };
     if options.skeleton {
         let bone_color = Color::srgb(1.0, 0.75, 0.1);
-        for &(position, parent) in &scene.bones {
-            let joint = root.transform_point(position);
+        let position = |node: usize| {
+            globals
+                .get(nodes.0[node])
+                .map(|global| global.translation())
+                .ok()
+        };
+        for &(node, parent) in &scene.bones {
+            let Some(joint) = position(node) else {
+                continue;
+            };
             gizmos.sphere(Isometry3d::from_translation(joint), 0.012, bone_color);
-            if let Some(parent) = parent {
-                gizmos.line(
-                    joint,
-                    root.transform_point(scene.bones[parent].0),
-                    bone_color,
-                );
+            if let Some(parent) = parent.and_then(|bone| position(scene.bones[bone].0)) {
+                gizmos.line(joint, parent, bone_color);
             }
         }
     }
@@ -547,13 +783,23 @@ fn update_help(
         (None, count) if count <= 6 => format!("Textures : {}", textures.join(", ")),
         (None, count) => format!("Textures : {count}, dont {}", textures[..6].join(", ")),
     };
+    let animation_line = match &scene.animation {
+        Some(animation) => format!(
+            "Animation : {} ({:.2} s, en boucle sur place)   [Espace] {}\n",
+            animation.name,
+            animation.duration,
+            if options.playing { "pause" } else { "lecture" }
+        ),
+        None => String::new(),
+    };
     let help = format!(
         "{name} : {vertices} sommets, {triangles} triangles, {bones} os\n\
          {texture_line}\n\
+         {animation_line}\
          Taille dans le fichier : X {x:.2} m, Y {y:.2} m, Z {z:.2} m\n\
          Souris : clic gauche + glisser pour tourner, molette pour zoomer\n\
          [S] squelette : {skeleton}   [V] maillage : {mesh}   [G] grille : {grid}\n\
-         [H] axe vertical du fichier : {axis}   [F] recadrer",
+         [H] axe vertical : {axis}   [F] recadrer",
         name = model.name,
         vertices = model.vertex_count(),
         triangles = model.triangle_count(),
