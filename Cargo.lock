@@ -332,6 +332,7 @@ dependencies = [
  "bevy-bridge",
  "clap",
  "formats-rw",
+ "retarget",
 ]
 
 [[package]]

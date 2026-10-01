@@ -289,7 +289,7 @@ struct Options {
 impl Options {
     fn root_transform(&self) -> Transform {
         if self.z_up {
-            Transform::from_rotation(Quat::from_rotation_x(-FRAC_PI_2))
+            Transform::from_rotation(Quat::from_array(retarget::VICE_CITY_TO_Y_UP))
         } else {
             Transform::IDENTITY
         }
