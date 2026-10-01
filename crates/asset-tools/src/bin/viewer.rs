@@ -137,6 +137,7 @@ fn texture_board(name: &str, textures: &[Texture]) -> Model {
                     },
                     indices: vec![0, 1, 2, 0, 2, 3],
                 }],
+                skin: None,
             };
             x += width + 0.1;
             mesh
@@ -148,6 +149,7 @@ fn texture_board(name: &str, textures: &[Texture]) -> Model {
             name: "board".into(),
             parent: None,
             local: Mat4::IDENTITY.to_cols_array(),
+            bone_id: None,
         }],
         meshes,
         skeleton: None,

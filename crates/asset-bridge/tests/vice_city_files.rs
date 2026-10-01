@@ -499,3 +499,31 @@ fn run_player_drives_tommy_skeleton() {
         }
     }
 }
+
+#[test]
+fn run_player_binds_to_the_player_model() {
+    let Some(vice_city) = game_dir(Game::ViceCity) else {
+        return;
+    };
+    let mut game = ViceCity::open(&vice_city).unwrap();
+    let animations = game.load_animations("ped").unwrap();
+    assert_eq!(animations.len(), 234);
+    let run = animations.iter().find(|a| a.name == "run_player").unwrap();
+    let model = game.load_model("player").unwrap();
+    for track in &run.tracks {
+        let node = track
+            .node_in(&model)
+            .unwrap_or_else(|| panic!("{} sans nœud", track.bone_name));
+        assert_eq!(model.nodes[node].name, track.bone_name);
+    }
+    // The skin weights of Tommy add up to 1 and point to existing bones.
+    let skin = model.meshes[0].skin.as_ref().unwrap();
+    let bones = model.skeleton.as_ref().unwrap().bones.len();
+    for (joints, weights) in skin.joints.iter().zip(&skin.weights) {
+        assert!((weights.iter().sum::<f32>() - 1.0).abs() < 1e-3);
+        assert!(joints.iter().all(|&joint| usize::from(joint) < bones));
+    }
+
+    // Weapon animations live in gta3.img.
+    assert!(!game.load_animations("colt45").unwrap().is_empty());
+}
