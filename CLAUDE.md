@@ -37,6 +37,7 @@ cargo run -p asset-tools -- afs summary              # archives AFS de PES 6, pa
 cargo run -p asset-tools -- afs list 0_text --tree   # fichiers et sous-fichiers de 0_text.afs
 cargo run -p asset-tools --bin viewer -- player --pes 0_text:1010 --pes-texture 0_text:419 --pes-boots 0_text:5322/0/0 --pes-head 0_text:1943 --pes-hair 0_text:4570   # joueur PES 6 à côté de Tommy
 cargo run -p asset-tools --bin viewer -- player --anim run_player   # animation en boucle
+cargo run -p asset-tools --bin viewer -- player --anim run_player --pes 0_text:1010 --pes-texture 0_text:419 --pes-boots 0_text:5322/0/0 --pes-head 0_text:1943 --pes-hair 0_text:4570   # même animation sur Tommy et sur le joueur PES
 cargo run -p asset-tools --bin viewer -- --textures vc:player.txd     # textures d'un TXD à plat
 cargo run -p asset-tools -- sfx export 50        # son n° 50 en WAV dans le dossier de cache
 ```

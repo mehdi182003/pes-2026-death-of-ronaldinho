@@ -1,12 +1,14 @@
 //! Asset viewer: shows a textured Vice City model, in its bind pose (T-pose
 //! for a character) or playing an animation in a loop, or the textures of a
-//! TXD laid flat. A PES 6 model can be shown alone or next to it.
+//! TXD laid flat. A PES 6 model can be shown alone or next to it, playing
+//! the same animation.
 //!
 //! ```sh
 //! cargo run -p asset-tools --bin viewer -- player
 //! cargo run -p asset-tools --bin viewer -- player --anim run_player
 //! cargo run -p asset-tools --bin viewer -- --textures D:\ViceCity\txd\LOADSC0.TXD
-//! cargo run -p asset-tools --bin viewer -- player --pes 0_text:995 --pes-texture 0_text:419 --pes-boots 0_text:5322/0/0 --pes-head 0_text:1943 --pes-hair 0_text:4570
+//! cargo run -p asset-tools --bin viewer -- player --pes 0_text:1010 --pes-texture 0_text:419 --pes-boots 0_text:5322/0/0 --pes-head 0_text:1943 --pes-hair 0_text:4570
+//! cargo run -p asset-tools --bin viewer -- player --anim run_player --pes 0_text:1010 --pes-texture 0_text:419 --pes-boots 0_text:5322/0/0 --pes-head 0_text:1943 --pes-hair 0_text:4570
 //! ```
 
 use std::f32::consts::FRAC_PI_2;
@@ -40,8 +42,9 @@ struct Args {
     model: Option<String>,
 
     /// Corps de joueur de PES 6, <archive>:<numéro>[/<sous-fichier>] (par
-    /// exemple 0_text:995) : seul, ou à côté du modèle de Vice City.
-    #[arg(long, conflicts_with_all = ["textures", "anim"])]
+    /// exemple 0_text:995) : seul, ou à côté du modèle de Vice City. Avec
+    /// --anim, il joue la même animation que lui.
+    #[arg(long, conflicts_with = "textures")]
     pes: Option<PesFile>,
 
     /// Tenue du joueur de PES 6 : maillot, short et chaussettes (par exemple
@@ -169,6 +172,9 @@ fn load(args: &Args) -> Result<ViewerScene> {
         None => None,
     };
     let Some(name) = args.model.as_deref() else {
+        if args.anim.is_some() {
+            anyhow::bail!("--anim demande un modèle de Vice City, par exemple player");
+        }
         let (model, textures) = pes_scene.expect("clap requires a model or --pes");
         return Ok(ViewerScene::new(model, textures, false, None, None));
     };
@@ -196,12 +202,105 @@ fn load(args: &Args) -> Result<ViewerScene> {
         }
         None => None,
     };
-    if let Some((pes_model, pes_textures)) = pes_scene {
-        let (model, mut textures) = (beside(model, pes_model), textures);
-        textures.extend(pes_textures);
-        return Ok(ViewerScene::new(model, textures, false, note, None));
+    let Some((pes_model, pes_textures)) = pes_scene else {
+        return Ok(ViewerScene::new(model, textures, false, note, animation));
+    };
+    let mut textures = textures;
+    textures.extend(pes_textures);
+    let Some(animation) = animation else {
+        return Ok(ViewerScene::new(
+            beside(model, pes_model),
+            textures,
+            false,
+            note,
+            None,
+        ));
+    };
+    let (model, animation) = running_beside(model, pes_model, &animation)?;
+    Ok(ViewerScene::new(
+        model,
+        textures,
+        false,
+        note,
+        Some(Arc::new(animation)),
+    ))
+}
+
+/// `base`, playing `animation`, with `other` one metre to its right playing
+/// the same animation retargeted to its skeleton, the lowest points of both
+/// at the same height. Both stand like Vice City animations, along +Z.
+fn running_beside(
+    base: Model,
+    mut other: Model,
+    animation: &Animation,
+) -> Result<(Model, Animation)> {
+    let retargeted = retarget::retarget(
+        animation,
+        &base,
+        &other,
+        retarget::PES6_FROM_VICE_CITY,
+        retarget::VICE_CITY_ANIMATION_TO_COMMON,
+        true,
+    )?;
+    // Bones are matched by name ignoring case: keep the PES bones apart
+    // from Tommy's ("head" and "Head").
+    for node in &mut other.nodes {
+        node.name = format!("PES {}", node.name);
     }
-    Ok(ViewerScene::new(model, textures, false, note, animation))
+    let tracks = retargeted.tracks.into_iter().map(|track| neutral::Track {
+        bone_name: format!("PES {}", track.bone_name),
+        ..track
+    });
+
+    let to_animation =
+        Mat4::from_quat(Quat::from_array(retarget::VICE_CITY_ANIMATION_TO_COMMON).inverse());
+    // Height of the soles: the lowest joint over the animation, minus how
+    // far the mesh goes below the lowest joint in the bind pose.
+    let sole = |model: &Model, animation: &Animation, frame: Mat4| {
+        let bind = BindPose::of(model);
+        let lowest_vertex = lowest_point(model);
+        let lowest_joint = bind
+            .worlds
+            .iter()
+            .map(|world| world.w_axis.y)
+            .fold(f32::MAX, f32::min);
+        let lowest_moving = (0..=16)
+            .flat_map(|step| {
+                let time = animation.duration * step as f32 / 16.0;
+                retarget::pose(model, animation, time)
+                    .into_iter()
+                    .map(move |world| (frame * world).w_axis.z)
+            })
+            .fold(f32::MAX, f32::min);
+        lowest_moving - (lowest_joint - lowest_vertex)
+    };
+    let retargeted = Animation {
+        tracks: tracks.collect(),
+        ..retargeted
+    };
+    let lift = sole(&base, animation, Mat4::IDENTITY) - sole(&other, &retargeted, to_animation);
+    place(
+        &mut other,
+        Mat4::from_translation(Vec3::new(1.0, 0.0, lift)) * to_animation,
+    );
+    let mut both = animation.clone();
+    both.tracks.extend(retargeted.tracks);
+    Ok((merge(base, other), both))
+}
+
+/// Lowest vertex of `model` in its bind pose.
+fn lowest_point(model: &Model) -> f32 {
+    let bind = BindPose::of(model);
+    model
+        .meshes
+        .iter()
+        .flat_map(|mesh| {
+            let world = bind.worlds[mesh.node];
+            mesh.positions
+                .iter()
+                .map(move |&p| world.transform_point3(Vec3::from_array(p)).y)
+        })
+        .fold(f32::MAX, f32::min)
 }
 
 /// A PES 6 player and its textures, the model scaled to metres.
@@ -246,26 +345,18 @@ fn place(model: &mut Model, transform: Mat4) {
 }
 
 /// `base` with `other` added one metre to its right (+X), feet at the same
-/// height, both in their bind pose. Their skeletons are merged.
-fn beside(mut base: Model, mut other: Model) -> Model {
-    let lowest = |model: &Model| {
-        let bind = BindPose::of(model);
-        model
-            .meshes
-            .iter()
-            .flat_map(|mesh| {
-                let world = bind.worlds[mesh.node];
-                mesh.positions
-                    .iter()
-                    .map(move |&p| world.transform_point3(Vec3::from_array(p)).y)
-            })
-            .fold(f32::MAX, f32::min)
-    };
-    let lift = lowest(&base) - lowest(&other);
+/// height, both in their bind pose.
+fn beside(base: Model, mut other: Model) -> Model {
+    let lift = lowest_point(&base) - lowest_point(&other);
     place(
         &mut other,
         Mat4::from_translation(Vec3::new(1.0, lift, 0.0)),
     );
+    merge(base, other)
+}
+
+/// One model holding both, their skeletons merged.
+fn merge(mut base: Model, other: Model) -> Model {
     let shift = base.nodes.len();
     let bone_shift = base.skeleton.as_ref().map_or(0, |s| s.bones.len());
     for node in other.nodes {

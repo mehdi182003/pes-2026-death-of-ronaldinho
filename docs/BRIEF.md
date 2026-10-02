@@ -194,6 +194,15 @@ Références : le wiki GTAMods (pages RenderWare, DFF, TXD, IFP, IMG), librw et 
 - Le visualiseur affiche un modèle PES seul ou à côté d'un modèle de Vice City (`--pes`, `--pes-texture`, `--pes-boots`, `--pes-head`, `--pes-hair`), pieds à la même hauteur ; `--yaw` choisit l'angle de la caméra. `--capture <fichier.png>` enregistre une image de la fenêtre puis ferme : Claude peut ainsi voir le rendu avant de demander une validation.
 - Le squelette des corps est lu (`formats_pes::model::Bone`) ; seule l'articulation de la tête sert en J5. HYPOTHÈSE sur l'ordre des rotations, à confirmer en J6 (les jambes et le dos ne tombent pas encore juste).
 
+**Constats (J6)**, détaillés dans `docs/formats/pes-model.md` : les numéros d'os des sommets passent par la **table des os** de l'instruction `03` du programme de dessin (une par corps, vérifiée sur les 573 corps à 19 os). Avec elle, tout le squelette en T tombe juste (l'ordre `Rz·Ry·Rx` est confirmé) : bassin, hanches, genoux, chevilles, colonne, clavicules, épaules, coudes, poignets, cou, tête. Tommy en pose de liaison et un corps PES sont dans le **même repère** : Y en haut, face vers +Z, gauche vers +X, bras à l'horizontale. Les animations de Vice City, elles, tiennent le personnage le long de +Z et le font avancer vers +Y.
+
+**Décisions (J6) :**
+
+- Un corps PES devient un modèle skinné (`asset_bridge::pes6::convert_model`) : un nœud par os, nommé d'après `BODY_BONES` (« pelvis », « left thigh »…), et les poids des sommets ; la tête et les cheveux suivent le nœud de l'os de la tête.
+- Le retargeting (`retarget::retarget`) donne à chaque os cible la rotation de son os source relative à sa pose de liaison, dans le repère commun ; le bassin suit le déplacement du bassin source, mis à l'échelle de la hauteur des jambes, et peut jouer sur place. Carte des os : `retarget::PES6_FROM_VICE_CITY` (l'os « hips » de PES, sans équivalent, garde sa pose par rapport au bassin ; HYPOTHÈSE : « spine » suit Spine1). Repère des animations de Vice City : `retarget::VICE_CITY_ANIMATION_TO_COMMON`. `glam` (la version de Bevy) est figé pour ces calculs hors de Bevy.
+- Le visualiseur fait jouer une animation de Vice City à Tommy et, retargetée, au joueur PES placé à côté (`--anim run_player --pes …`).
+- Les animations propres à PES (format `07 12 01 20`, HYPOTHÈSE) ne sont pas encore lues : le critère de J6 est rempli avec une animation de Vice City. Elles restent à étudier pour J7 et J8 (course, passe, tir des joueurs PES).
+
 **Plan de repli pour les animations PES :** si elles restent illisibles après un effort raisonnable, utiliser des animations libres de droits (par exemple Mixamo) retargetées sur le squelette PES. Le jalon correspondant ne doit pas bloquer tout le projet.
 
 ## Méthode de reverse engineering
