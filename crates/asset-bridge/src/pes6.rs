@@ -675,11 +675,13 @@ mod tests {
                 .map(|(texture, triangle)| Draw {
                     part: 0,
                     texture,
-                    bone: 0,
+                    group: 0,
+                    bone_table: None,
                     triangles: vec![triangle],
                 })
                 .collect(),
             bones: Vec::new(),
+            bone_tables: Vec::new(),
         };
         let converted = convert_model("test", &model, Some("tex"));
         let mesh = &converted.meshes[0];

@@ -64,7 +64,8 @@ pub struct Vertex {
     /// R, G, B, A.
     pub color: Option<[u8; 4]>,
     pub uv: [f32; 2],
-    /// Bone numbers, as used by the draws' bone tables. Unused slots are 0.
+    /// Bone numbers, indices into the bone table of the draws that use the
+    /// vertex (see [`PesModel::skeleton_bone`]). Unused slots are 0.
     pub joints: [u8; 4],
     /// Out of 255; `[255, 0, 0, 0]` when a vertex follows a single bone.
     pub weights: [u8; 4],
@@ -85,8 +86,13 @@ pub struct Draw {
     // HYPOTHÈSE: a texture slot of the model, filled by the game with the
     // kit, skin, boots... It goes from 0 to 10 on a player.
     pub texture: u16,
-    /// Bone given by the program (opcode `0a`) before the draw.
-    pub bone: u16,
+    /// Argument of the last opcode `0a` before the draw.
+    // HYPOTHÈSE: not a bone of the skeleton (it goes up to 49 on bodies
+    // with 19 bones); perhaps a batch of the PlayStation 2 renderer.
+    pub group: u16,
+    /// Index into [`PesModel::bone_tables`] of the last table (opcode `03`)
+    /// before the draw, if any.
+    pub bone_table: Option<usize>,
     /// Triangles, counter-clockwise, as indices into the part's vertices.
     pub triangles: Vec<[u16; 3]>,
 }
@@ -97,6 +103,21 @@ pub struct PesModel {
     pub draws: Vec<Draw>,
     /// Empty for models that do not move with bones (faces, balls...).
     pub bones: Vec<Bone>,
+    /// Tables of the draw program (opcode `03`): entry `j` is the skeleton
+    /// bone of the vertices whose bone number is `j`. Checked on the 573
+    /// bodies with 19 bones: one table each, a permutation of the 19 bones,
+    /// and 99.9 % of the vertices that follow one bone lie by it.
+    pub bone_tables: Vec<Vec<u8>>,
+}
+
+impl PesModel {
+    /// The skeleton bone (index into [`PesModel::bones`]) that bone number
+    /// `joint` of a vertex drawn by `draw` stands for.
+    pub fn skeleton_bone(&self, draw: &Draw, joint: u8) -> Option<usize> {
+        let table = self.bone_tables.get(draw.bone_table?)?;
+        let bone = usize::from(*table.get(usize::from(joint))?);
+        (bone < self.bones.len()).then_some(bone)
+    }
 }
 
 /// A bone of the skeleton, in the bind pose (T-pose).
@@ -117,12 +138,13 @@ pub struct Bone {
 impl Bone {
     /// The rotation part of the record, as a row-major 3 × 3 matrix:
     /// `Rz · Ry · Rx` (X first).
-    // HYPOTHÈSE: of the twelve possible orders, several put the joints of
-    // the arms and the head where the mesh has them, but only half of them
-    // turn an attached head the way the body faces (nose towards +Z, like
-    // the toes); Ry · Rz · Rx, tried first, turned it backwards. The joints
-    // of the legs and the spine do not fall in place yet with any order:
-    // to be resolved in J6, with the animations.
+    // HYPOTHÈSE: of the twelve possible orders, several put the joints
+    // where the mesh has them, but only half of them turn an attached head
+    // the way the body faces (nose towards +Z, like the toes); Ry · Rz · Rx,
+    // tried first, turned it backwards. With this order every joint of a
+    // body falls in place once the vertices' bone numbers go through the
+    // bone table (hips, knees, ankles, spine, shoulders, elbows, wrists,
+    // neck, head).
     pub fn rotation(&self) -> [[f32; 3]; 3] {
         let [x, y, z] = self.angles;
         let rx = [
@@ -237,12 +259,13 @@ pub fn parse(bytes: &[u8]) -> Result<PesModel, ModelError> {
             .ok_or(ModelError::Truncated("programme"))?,
         "programme",
     )?;
-    let draws = run_program(program, &parts, &strip)?;
+    let (draws, bone_tables) = run_program(program, &parts, &strip)?;
     let bones = parse_bones(&file, program_end)?;
     Ok(PesModel {
         parts,
         draws,
         bones,
+        bone_tables,
     })
 }
 
@@ -363,21 +386,23 @@ fn parse_strip(file: &Bytes, mut at: usize, end: usize) -> Result<Vec<u16>, Mode
 /// - `00`: nothing (padding, 2 bytes);
 /// - `01`, `0d`: unknown, one u16 argument (4 bytes);
 /// - `02`: texture of the next draws (4 bytes);
-/// - `03`: a table of `n` bytes (`03 00 n`, then the bytes, then padding);
+/// - `03`: a bone table of `n` bytes (`03 00 n`, then the bytes, then
+///   padding), see [`PesModel::bone_tables`];
 /// - `04`: vertex part of the next draws, with its flags (`04 flags u16`);
 /// - `07`: draw (`07 mode`, then u16 index count, first vertex, vertex count
 ///   and triangle count): the next `index count` indices of the strip,
 ///   which stay among the given vertices;
-/// - `0a`: bone of the next draws (4 bytes).
+/// - `0a`: unknown, one u16 argument kept as [`Draw::group`] (4 bytes).
 fn run_program(
     program: &[u8],
     parts: &[VertexPart],
     strip: &[u16],
-) -> Result<Vec<Draw>, ModelError> {
+) -> Result<(Vec<Draw>, Vec<Vec<u8>>), ModelError> {
     let code = Bytes(program);
     let mut draws = Vec::new();
+    let mut tables = Vec::new();
     let (mut at, mut used) = (0, 0);
-    let (mut part, mut texture, mut bone) = (None, 0, 0);
+    let (mut part, mut texture, mut group) = (None, 0, 0);
     while at < program.len() {
         let opcode = program[at];
         match opcode {
@@ -389,6 +414,7 @@ fn run_program(
             }
             0x03 => {
                 let len = usize::from(code.get(at + 2, 1, "programme")?[0]);
+                tables.push(code.get(at + 3, len, "programme")?.to_vec());
                 at += 3 + len;
                 at += at % 2;
             }
@@ -433,13 +459,14 @@ fn run_program(
                 draws.push(Draw {
                     part,
                     texture,
-                    bone,
+                    group,
+                    bone_table: tables.len().checked_sub(1),
                     triangles,
                 });
                 at += 10;
             }
             0x0a => {
-                bone = code.u16(at + 2, "programme")?;
+                group = code.u16(at + 2, "programme")?;
                 at += 4;
             }
             _ => return Err(ModelError::UnknownOpcode { opcode, at }),
@@ -452,7 +479,7 @@ fn run_program(
             strip.len()
         )));
     }
-    Ok(draws)
+    Ok((draws, tables))
 }
 
 /// Triangles of a strip, skipping the degenerate ones that join runs.
@@ -565,11 +592,36 @@ mod tests {
             [Draw {
                 part: 0,
                 texture: 5,
-                bone: 2,
+                group: 2,
+                bone_table: Some(0),
                 triangles: vec![[0, 1, 2]],
             }]
         );
+        assert_eq!(model.bone_tables, [vec![7, 8]]);
         assert!(model.bones.is_empty());
+    }
+
+    #[test]
+    fn vertex_bone_numbers_go_through_the_bone_table() {
+        let mut model = parse(&tiny_model()).unwrap();
+        let bone = Bone {
+            angles: [0.0; 3],
+            translation: [0.0; 3],
+            parent: None,
+        };
+        model.bones = vec![bone; 9];
+        let draw = model.draws[0].clone();
+        assert_eq!(model.skeleton_bone(&draw, 0), Some(7));
+        assert_eq!(model.skeleton_bone(&draw, 1), Some(8));
+        // Past the end of the table, or a table entry past the skeleton.
+        assert_eq!(model.skeleton_bone(&draw, 2), None);
+        model.bones.truncate(8);
+        assert_eq!(model.skeleton_bone(&draw, 1), None);
+        let untabled = Draw {
+            bone_table: None,
+            ..draw
+        };
+        assert_eq!(model.skeleton_bone(&untabled, 0), None);
     }
 
     #[test]

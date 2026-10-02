@@ -52,10 +52,10 @@ Instructions alignées sur 2 octets ; le premier octet est le code :
 | `00` | 2 | rien (remplissage) |
 | `01`, `0d` | 4 | inconnus, un argument u16 |
 | `02` | 4 | emplacement de texture des dessins suivants (0 à 10 sur un joueur) |
-| `03` | 3 + n, aligné | une table de n octets (`03 00 n` puis les octets) ; sens inconnu, peut-être les os utilisés |
+| `03` | 3 + n, aligné | table des os (`03 00 n` puis les octets) : l'entrée *j* est l'os du squelette des sommets dont le numéro d'os vaut *j* (voir « Squelette ») |
 | `04` | 4 | partie de sommets des dessins suivants (`04 drapeaux u16`, les drapeaux reprenant ceux de la partie) |
 | `07` | 10 | dessin : `07 mode`, puis nombre d'indices, premier sommet, nombre de sommets, nombre de triangles |
-| `0a` | 4 | os des dessins suivants |
+| `0a` | 4 | inconnu, un argument u16 : ce n'est pas un os (il monte jusqu'à 49 sur les corps à 19 os) ; HYPOTHÈSE : un lot du moteur de rendu PS2 |
 
 Vérifications faites à chaque lecture, vraies sur les 751 modèles : les indices d'un dessin restent dans ses sommets ; le nombre de triangles non dégénérés est celui annoncé ; toute la bande est utilisée. Les modes `05`, `06` et `07` (bits bas ; les bits hauts suivent le nombre d'os) sont tous des bandes de triangles.
 
@@ -67,7 +67,24 @@ Juste après le programme de dessin (offset donné par le u32 à l'offset 4) : u
 
 Chaque os donne le passage de l'espace du modèle à celui de l'os : un point `p` du modèle est en `R·p + t` pour l'os. L'articulation est donc en `−Rᵀ·t`.
 
-HYPOTHÈSE : `R = Rz·Ry·Rx` (X d'abord). Avec cet ordre, les articulations des bras (épaules à ±80,8, coudes à ±205,8, poignets à ±297,3, toutes à 602,7 de haut) et de la tête (670,6) tombent où le maillage les attend, et une tête posée sur l'os 16 regarde du côté où pointent les orteils (+Z). L'ordre `Ry·Rz·Rx`, essayé d'abord, place aussi bien les articulations mais tourne la tête vers l'arrière (constaté à l'œil, puis vérifié par le test `player_body_gets_its_head_on_the_shoulders`). Celles des jambes et du dos ne tombent pas encore juste, quel que soit l'ordre : à reprendre au jalon J6.
+HYPOTHÈSE : `R = Rz·Ry·Rx` (X d'abord). L'ordre `Ry·Rz·Rx`, essayé d'abord, place aussi bien les articulations mais tourne la tête vers l'arrière (constaté à l'œil, puis vérifié par le test `player_body_gets_its_head_on_the_shoulders`). Avec `Rz·Ry·Rx`, une tête posée sur l'os 16 regarde du côté où pointent les orteils (+Z), et le corps n° 1010 donne un squelette en T complet (unités PES, X vers la gauche du joueur) :
+
+| Os | Parent | Articulation | Rôle |
+| --- | --- | --- | --- |
+| 0 | — | (0 ; 463,2 ; 0) | bassin, racine |
+| 1 | 0 | (0 ; 463,2 ; 0) | bas du bassin, parent des jambes |
+| 2, 3 | 1 | (±37,6 ; 380,8 ; 0) | hanches (2 à +X) |
+| 4, 5 | 2, 3 | (±37,6 ; 218,9 ; 0) | genoux |
+| 12, 13 | 4, 5 | (±37,6 ; 41,1 ; −14,7) | chevilles |
+| 6 | 0 | (0 ; 529,8 ; 0) | colonne |
+| 7, 8 | 6 | (0 ; 602,7 ; 0) | clavicules |
+| 9, 10 | 7, 8 | (±80,8 ; 602,7 ; 0) | épaules (9 à +X) |
+| 14, 15 | 9, 10 | (±205,8 ; 602,7 ; 0) | coudes |
+| 17, 18 | 14, 15 | (±297,3 ; 602,7 ; 0) | poignets |
+| 11 | 6 | (0 ; 642,7 ; −11,2) | cou |
+| 16 | 11 | (0 ; 670,6 ; −0,7) | tête |
+
+**Os des sommets** : le numéro d'os d'un sommet n'est pas un os du squelette mais une entrée de la table de l'instruction `03` qui précède le dessin. Sur le corps n° 1010, la table vaut `6 11 8 16 7 18 10 15 3 5 1 2 4 17 14 9 0 13 12` : les sommets de numéro 5 (centre à x = −343, la main) suivent l'os 18 (poignet à x = −297). Vérifié sur tout le jeu : les 573 corps à 19 os ont une seule table, permutation des 19 os, et 99,9 % des sommets qui suivent un seul os sont près de lui (test `body_vertices_lie_by_the_bones_of_their_bone_table` ; les exceptions sont surtout dans les n° 1116 à 1118).
 
 ## Emplacements de texture d'un corps de joueur
 

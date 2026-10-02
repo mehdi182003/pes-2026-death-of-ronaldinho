@@ -247,6 +247,57 @@ fn models_parse_with_consistent_draws() {
 }
 
 #[test]
+fn body_vertices_lie_by_the_bones_of_their_bone_table() {
+    let Some(dir) = game_dir(Game::Pes6) else {
+        return;
+    };
+    let pes = Pes6::open(&dir).unwrap();
+    let mut afs = pes.open_archive("0_text.afs").unwrap();
+    let entries: Vec<_> = afs.entries()[990..1130].to_vec();
+    let (mut bodies, mut near, mut far) = (0, 0, 0);
+    for entry in &entries {
+        for file in content::extract(&afs.read(entry).unwrap()) {
+            let Some(body) = (file.kind == Kind::Model)
+                .then(|| model::parse(&file.data).ok())
+                .flatten()
+                .filter(|body| body.bones.len() == 19)
+            else {
+                continue;
+            };
+            bodies += 1;
+            assert_eq!(body.bone_tables.len(), 1, "n° {}", entry.index);
+            let joints: Vec<[f32; 3]> = body.bones.iter().map(|bone| bone.joint()).collect();
+            for draw in &body.draws {
+                let part = &body.parts[draw.part];
+                let first = draw.triangles.iter().flatten().min().copied().unwrap_or(0);
+                let last = draw.triangles.iter().flatten().max().copied().unwrap_or(0);
+                for vertex in &part.vertices[usize::from(first)..=usize::from(last)] {
+                    if part.format.bones == 0 || vertex.weights[0] < 250 {
+                        continue;
+                    }
+                    let bone = body.skeleton_bone(draw, vertex.joints[0]).unwrap();
+                    // The vertex follows a bone that starts or ends next to
+                    // it: its own joint is among the four nearest.
+                    let distance = |joint: &[f32; 3]| {
+                        (0..3)
+                            .map(|i| (joint[i] - vertex.position[i]).powi(2))
+                            .sum::<f32>()
+                    };
+                    let own = distance(&joints[bone]);
+                    let closer = joints.iter().filter(|j| distance(j) < own).count();
+                    if closer < 4 { near += 1 } else { far += 1 }
+                }
+            }
+        }
+    }
+    // Files 990 to 1129 of the full game: 393 bodies, 165 146 vertices by
+    // their bone, 285 not (the whole game has 573 bodies of 19 bones).
+    eprintln!("corps : {bodies}, sommets près de leur os : {near}, loin : {far}");
+    assert!(bodies > 300, "{bodies}");
+    assert!(far * 100 < near, "{near} / {far}");
+}
+
+#[test]
 fn player_body_loads_textured_at_a_plausible_size() {
     let Some(dir) = game_dir(Game::Pes6) else {
         return;
