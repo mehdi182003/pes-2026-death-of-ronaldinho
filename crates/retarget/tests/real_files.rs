@@ -1,0 +1,98 @@
+//! Retargeting between the real files of both games. Skipped when either
+//! game is not configured (see `asset_bridge::testing::game_dir`).
+
+use asset_bridge::config::Game;
+use asset_bridge::model::{Animation, Model};
+use asset_bridge::pes6::Pes6;
+use asset_bridge::testing::game_dir;
+use asset_bridge::vice_city::ViceCity;
+use glam::{Quat, Vec3};
+use retarget::{PES6_FROM_VICE_CITY, VICE_CITY_ANIMATION_TO_COMMON, pose, retarget};
+
+/// Tommy, `run_player` and the PES field player's body n° 1010.
+fn models() -> Option<(Model, Animation, Model)> {
+    let vice_city = game_dir(Game::ViceCity)?;
+    let pes6 = game_dir(Game::Pes6)?;
+    let mut game = ViceCity::open(&vice_city).unwrap();
+    let tommy = game.load_model("player").unwrap();
+    let run = game
+        .load_animations("ped")
+        .unwrap()
+        .into_iter()
+        .find(|animation| animation.name == "run_player")
+        .unwrap();
+    let body = Pes6::open(&pes6)
+        .unwrap()
+        .load_model(&"0_text:1010".parse().unwrap(), None)
+        .unwrap();
+    Some((tommy, run, body))
+}
+
+fn joint(model: &Model, worlds: &[glam::Mat4], name: &str) -> Vec3 {
+    let node = model.nodes.iter().position(|n| n.name == name).unwrap();
+    worlds[node].w_axis.truncate()
+}
+
+#[test]
+fn run_player_stands_in_the_common_frame() {
+    let Some((tommy, run, _)) = models() else {
+        return;
+    };
+    let common = Quat::from_array(VICE_CITY_ANIMATION_TO_COMMON);
+    let worlds = pose(&tommy, &run, 0.0);
+    let at = |name| common * joint(&tommy, &worlds, name);
+    // Up is +Y, the left side +X, as in the bind pose.
+    assert!(at("Head").y > at("Pelvis").y + 0.5, "{:?}", at("Head"));
+    assert!(at("L Thigh").x > at("R Thigh").x, "{:?}", at("L Thigh"));
+    // It runs forwards, towards +Z.
+    let end = pose(&tommy, &run, run.duration);
+    let travel = common * joint(&tommy, &end, "Pelvis") - at("Pelvis");
+    assert!(travel.z > 3.0, "{travel:?}");
+}
+
+#[test]
+fn run_player_plays_on_a_pes_body() {
+    let Some((tommy, run, body)) = models() else {
+        return;
+    };
+    let moved = retarget(
+        &run,
+        &tommy,
+        &body,
+        PES6_FROM_VICE_CITY,
+        VICE_CITY_ANIMATION_TO_COMMON,
+        true,
+    )
+    .unwrap();
+    assert_eq!(moved.tracks.len(), PES6_FROM_VICE_CITY.len());
+    let (mut lowest, mut highest_foot) = (f32::MAX, f32::MIN);
+    let mut left_ahead = Vec::new();
+    for step in 0..=20 {
+        let time = run.duration * step as f32 / 20.0;
+        let worlds = pose(&body, &moved, time);
+        let at = |name| joint(&body, &worlds, name);
+        // Upright: the head over the pelvis, the pelvis over the feet (a
+        // foot kicked up behind still stays 0.4 m below it, as Tommy's).
+        assert!(
+            at("head").y > at("pelvis").y + 150.0,
+            "{time} : {:?}",
+            at("head")
+        );
+        for foot in ["left foot", "right foot"] {
+            assert!(at("pelvis").y > at(foot).y + 150.0, "{time} : {foot}");
+            lowest = lowest.min(at(foot).y);
+            highest_foot = highest_foot.max(at(foot).y);
+        }
+        // The legs stay on their side.
+        assert!(at("left thigh").x > at("right thigh").x, "{time}");
+        // In place: the pelvis does not travel.
+        assert!(at("pelvis").z.abs() < 120.0, "{time} : {:?}", at("pelvis"));
+        left_ahead.push(at("left foot").z > at("right foot").z);
+    }
+    // The ankles come down to the ground (41 units in the bind pose) and
+    // lift off it while running.
+    assert!((-20.0..120.0).contains(&lowest), "{lowest}");
+    assert!(highest_foot > lowest + 100.0, "{lowest} .. {highest_foot}");
+    // The feet take turns in front.
+    assert!(left_ahead.contains(&true) && left_ahead.contains(&false));
+}
