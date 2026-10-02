@@ -1,0 +1,213 @@
+//! The football match, in a stadium of PES 6, seen from the stand like the
+//! wide camera of PES.
+
+use asset_bridge::config::GamePaths;
+use asset_bridge::model::{Model, Texture};
+use asset_bridge::pes6::{Pes6, Pes6Error, PesFile};
+use bevy::input::mouse::{AccumulatedMouseScroll, MouseScrollUnit};
+use bevy::prelude::*;
+use bevy_bridge::{BevyBridgePlugin, ModelSpawner, SpawnOptions};
+
+use crate::capture::CapturePlugin;
+use crate::pitch;
+
+/// The stadium played in: the Sapporo dome of PES 6.
+const STADIUM: &str = "0_text:6949";
+/// The texture of its goal nets.
+const NET_TEXTURE: &str = "0_text:6949/1/43";
+
+/// What the match needs from the player's games, loaded before start.
+#[derive(Resource)]
+struct MatchAssets {
+    stadium: Model,
+    stadium_textures: Vec<Texture>,
+}
+
+fn load_assets(paths: &GamePaths) -> Result<MatchAssets, Pes6Error> {
+    let pes = Pes6::open(&paths.pes6)?;
+    let stadium: PesFile = STADIUM.parse().map_err(Pes6Error::Missing)?;
+    let (stadium, stadium_textures) = pes.load_scenery(&stadium)?;
+    Ok(MatchAssets {
+        stadium,
+        stadium_textures,
+    })
+}
+
+/// Runs the match.
+pub fn run(paths: &GamePaths, capture: CapturePlugin) -> AppExit {
+    let assets = match load_assets(paths) {
+        Ok(assets) => assets,
+        Err(err) => {
+            eprintln!("Chaos FC ne peut pas démarrer : lecture de PES 6 impossible.\n\n{err}");
+            return AppExit::error();
+        }
+    };
+    App::new()
+        .add_plugins(DefaultPlugins.set(WindowPlugin {
+            primary_window: Some(Window {
+                title: "Chaos FC".into(),
+                ..default()
+            }),
+            ..default()
+        }))
+        .add_plugins((BevyBridgePlugin, capture))
+        .insert_resource(ClearColor(Color::srgb(0.08, 0.08, 0.10)))
+        .insert_resource(GlobalAmbientLight {
+            brightness: 700.0,
+            ..default()
+        })
+        .insert_resource(assets)
+        .add_systems(Startup, (spawn_stadium, spawn_goals, setup))
+        .add_systems(Update, (zoom_camera, follow_focus).chain())
+        .run()
+}
+
+/// The PES stadium, turned Y up and scaled to metres. Its lighting is in
+/// its vertex colours: it is drawn unlit.
+fn spawn_stadium(mut spawner: ModelSpawner, assets: Res<MatchAssets>) {
+    let (stadium, _) = spawner.spawn(
+        &assets.stadium,
+        &assets.stadium_textures,
+        SpawnOptions {
+            unlit: true,
+            double_sided: true,
+        },
+    );
+    spawner.commands().entity(stadium).insert(
+        Transform::from_rotation(Quat::from_array(retarget::PES6_STADIUM_TO_Y_UP))
+            .with_scale(Vec3::splat(1.0 / retarget::PES6_STADIUM_UNITS_PER_METRE)),
+    );
+}
+
+/// Goals, with the net texture of the stadium.
+fn spawn_goals(
+    mut commands: Commands,
+    mut images: ResMut<Assets<Image>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    assets: Res<MatchAssets>,
+) {
+    let net = assets
+        .stadium_textures
+        .iter()
+        .find(|texture| texture.name == NET_TEXTURE)
+        .map(|texture| images.add(bevy_bridge::texture_image(texture)));
+    pitch::spawn_goals(&mut commands, &mut meshes, &mut materials, net);
+}
+
+/// What the camera keeps in view (the ball, once there is one).
+#[derive(Component)]
+pub struct CameraFocus;
+
+/// The camera in the main stand, on the side of the touchline at +Z, as in
+/// the wide view of PES: it slides along the pitch with the focus and
+/// leans towards it.
+#[derive(Component)]
+struct BroadcastCamera {
+    /// Point looked at, smoothed.
+    target: Vec3,
+    /// 1: normal; less is closer.
+    zoom: f32,
+}
+
+impl BroadcastCamera {
+    /// Distance from the target, in metres, and height above it: at the
+    /// front of the main stand.
+    const DISTANCE: f32 = 44.0;
+    const HEIGHT: f32 = 21.0;
+
+    fn transform(&self) -> Transform {
+        let offset = Vec3::new(0.0, Self::HEIGHT, Self::DISTANCE) * self.zoom;
+        Transform::from_translation(self.target + offset).looking_at(self.target, Vec3::Y)
+    }
+
+    /// Where to look for a focus at `focus`: along the pitch with it, but
+    /// only half way across, so that the far touchline stays in view.
+    fn aim(focus: Vec3) -> Vec3 {
+        let half_length = pitch::LENGTH / 2.0 - 12.0;
+        let half_width = pitch::WIDTH / 2.0;
+        Vec3::new(
+            focus.x.clamp(-half_length, half_length),
+            0.0,
+            focus.z.clamp(-half_width, half_width) * 0.5,
+        )
+    }
+}
+
+fn setup(mut commands: Commands) {
+    let camera = BroadcastCamera {
+        target: Vec3::ZERO,
+        zoom: 1.0,
+    };
+    commands.spawn((
+        Camera3d::default(),
+        Projection::Perspective(PerspectiveProjection {
+            // PES films the match with a narrow lens from far.
+            fov: 34f32.to_radians(),
+            ..default()
+        }),
+        camera.transform(),
+        camera,
+    ));
+    commands.spawn((
+        Text::new(
+            "Chaos FC - jalon J7\n\
+             Molette : zoom",
+        ),
+        TextFont::from_font_size(15.0),
+        Node {
+            position_type: PositionType::Absolute,
+            top: Val::Px(12.0),
+            left: Val::Px(12.0),
+            ..default()
+        },
+    ));
+}
+
+fn zoom_camera(scroll: Res<AccumulatedMouseScroll>, mut cameras: Query<&mut BroadcastCamera>) {
+    let notches = match scroll.unit {
+        MouseScrollUnit::Line => scroll.delta.y,
+        MouseScrollUnit::Pixel => scroll.delta.y / 100.0,
+    };
+    if notches == 0.0 {
+        return;
+    }
+    for mut camera in &mut cameras {
+        camera.zoom = (camera.zoom * 0.9f32.powf(notches)).clamp(0.3, 2.0);
+    }
+}
+
+/// Glides the camera towards its focus.
+fn follow_focus(
+    time: Res<Time>,
+    focus: Query<&GlobalTransform, With<CameraFocus>>,
+    mut cameras: Query<(&mut BroadcastCamera, &mut Transform)>,
+) {
+    let goal = focus
+        .single()
+        .map(|focus| BroadcastCamera::aim(focus.translation()))
+        .unwrap_or(Vec3::ZERO);
+    // About 90 % of the way in one second.
+    let blend = 1.0 - (-2.3 * time.delta_secs()).exp();
+    for (mut camera, mut transform) in &mut cameras {
+        camera.target = camera.target.lerp(goal, blend);
+        *transform = camera.transform();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_camera_follows_along_the_pitch_but_not_past_the_ends() {
+        assert_eq!(
+            BroadcastCamera::aim(Vec3::new(10.0, 1.0, 20.0)),
+            Vec3::new(10.0, 0.0, 10.0)
+        );
+        assert_eq!(
+            BroadcastCamera::aim(Vec3::new(60.0, 0.0, 0.0)).x,
+            pitch::LENGTH / 2.0 - 12.0
+        );
+    }
+}

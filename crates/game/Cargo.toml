@@ -14,6 +14,7 @@ path = "src/main.rs"
 asset-bridge.workspace = true
 bevy.workspace = true
 bevy-bridge.workspace = true
+bevy_rapier3d.workspace = true
 retarget.workspace = true
 
 [dev-dependencies]
