@@ -8,6 +8,7 @@
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
+use bevy_rapier3d::prelude::*;
 
 pub const LENGTH: f32 = 105.0;
 pub const WIDTH: f32 = 68.0;
@@ -18,6 +19,15 @@ pub const GOAL_HEIGHT: f32 = 2.44;
 pub const POST_RADIUS: f32 = 0.06;
 /// How far the net goes behind the goal line, at the ground.
 pub const GOAL_DEPTH: f32 = 2.0;
+
+/// The advertising boards of the stadium, behind the goal lines and along
+/// the touchlines: invisible walls there stop the ball.
+// HYPOTHÈSE: the faces of the boards of stadium 0_text:6949 (models 23 to
+// 26): at x = ±3021 and z = ±2214 units, 51.3 units per metre.
+pub const BOARD_X: f32 = 58.9;
+pub const BOARD_Z: f32 = 43.2;
+/// Height of the invisible walls: a ball kicked higher leaves the pitch.
+const WALL_HEIGHT: f32 = 12.0;
 
 /// x of the goal line at the end of the pitch `side` (-1 or +1).
 pub fn goal_line(side: f32) -> f32 {
@@ -115,6 +125,82 @@ pub fn net_panels(side: f32) -> [[Vec3; 4]; 4] {
     ]
 }
 
+/// The solid parts of the pitch: the ground, the posts, the crossbars, the
+/// nets and walls at the boards.
+pub fn spawn_colliders(commands: &mut Commands) {
+    // The ground, its top at y = 0.
+    commands.spawn((
+        Transform::from_xyz(0.0, -0.5, 0.0),
+        Collider::cuboid(BOARD_X + 5.0, 0.5, BOARD_Z + 5.0),
+        Restitution::coefficient(0.65),
+        Friction::coefficient(0.6),
+    ));
+    let half = GOAL_WIDTH / 2.0 + POST_RADIUS;
+    let height = GOAL_HEIGHT + 2.0 * POST_RADIUS;
+    for side in [-1.0f32, 1.0] {
+        let x = goal_line(side) + side * POST_RADIUS;
+        for z in [-half, half] {
+            commands.spawn((
+                Transform::from_xyz(x, height / 2.0, z),
+                Collider::cylinder(height / 2.0, POST_RADIUS),
+                Restitution::coefficient(0.8),
+            ));
+        }
+        commands.spawn((
+            Transform::from_xyz(x, GOAL_HEIGHT + POST_RADIUS, 0.0)
+                .with_rotation(Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
+            Collider::cylinder(half, POST_RADIUS),
+            Restitution::coefficient(0.8),
+        ));
+        // The net catches the ball: it gives back almost nothing.
+        for corners in net_panels(side) {
+            let (transform, half_size) = panel_box(corners);
+            commands.spawn((
+                transform,
+                Collider::cuboid(half_size.x, half_size.y, half_size.z),
+                Restitution {
+                    coefficient: 0.0,
+                    combine_rule: CoefficientCombineRule::Min,
+                },
+                Friction::coefficient(1.0),
+            ));
+        }
+    }
+    for (center, half_size) in [
+        (Vec3::new(BOARD_X, 0.0, 0.0), Vec3::new(0.2, 0.0, BOARD_Z)),
+        (Vec3::new(-BOARD_X, 0.0, 0.0), Vec3::new(0.2, 0.0, BOARD_Z)),
+        (Vec3::new(0.0, 0.0, BOARD_Z), Vec3::new(BOARD_X, 0.0, 0.2)),
+        (Vec3::new(0.0, 0.0, -BOARD_Z), Vec3::new(BOARD_X, 0.0, 0.2)),
+    ] {
+        let center = center + Vec3::Y * WALL_HEIGHT / 2.0;
+        commands.spawn((
+            Transform::from_translation(center),
+            Collider::cuboid(half_size.x, WALL_HEIGHT / 2.0, half_size.z),
+            Restitution::coefficient(0.3),
+        ));
+    }
+}
+
+/// A thin box covering a net panel: its transform and half sizes. The box
+/// is the rectangle spanned by the first edge and the height of the panel.
+pub fn panel_box(corners: [Vec3; 4]) -> (Transform, Vec3) {
+    let u = corners[1] - corners[0];
+    let across = corners[3] - corners[0];
+    let normal = u.cross(across).normalize_or_zero();
+    let v = normal.cross(u.normalize_or_zero());
+    // How far the panel goes along v (the trapezoid sides reach further).
+    let reach = corners
+        .iter()
+        .map(|c| (*c - corners[0]).dot(v))
+        .fold(0.0f32, f32::max);
+    let center = corners[0] + u / 2.0 + v * reach / 2.0;
+    let rotation = Quat::from_mat3(&Mat3::from_cols(u.normalize_or_zero(), v, normal));
+    (
+        Transform::from_translation(center).with_rotation(rotation),
+        Vec3::new(u.length() / 2.0, reach / 2.0, 0.03),
+    )
+}
+
 /// Size of one tile of the net texture, in metres.
 // HYPOTHÈSE: the PES net texture (0_text:6949/1/43, 128 × 128) shows about
 // three meshes across; real meshes are 12 cm wide.
@@ -151,6 +237,27 @@ fn quad(corners: [Vec3; 4]) -> Mesh {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn net_boxes_cover_their_panels() {
+        for corners in net_panels(1.0) {
+            let (transform, half) = panel_box(corners);
+            for corner in corners {
+                let local = transform.rotation.inverse() * (corner - transform.translation);
+                assert!(
+                    local.x.abs() <= half.x + 1e-3
+                        && local.y.abs() <= half.y + 1e-3
+                        && local.z.abs() < 1e-3,
+                    "{corner} : {local}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_boards_are_beyond_the_lines() {
+        const { assert!(BOARD_X > LENGTH / 2.0 + GOAL_DEPTH && BOARD_Z > WIDTH / 2.0) };
+    }
 
     #[test]
     fn the_net_hangs_behind_the_goal_line() {

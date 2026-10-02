@@ -31,6 +31,10 @@ Exemple : 66 688 octets = 128 (en-tête) + 1024 (palette de 256 couleurs) + 256 
 - **PSMT4** : un demi-octet par pixel, palette de 16 couleurs dans l'ordre. HYPOTHÈSE : le premier pixel est dans la moitié basse de l'octet.
 - **Alpha** : HYPOTHÈSE, convention PS2 (0x80 = opaque, valeur doublée) quand aucune couleur de la palette ne dépasse 0x80, ce qui est le cas de 7550 des 7552 palettes. Les autres utilisent toute la plage et sont prises telles quelles.
 
+## Pixels rangés comme une image 32 bits (« swizzle »)
+
+Quand la taille d'envoi (offsets 40 et 42) vaut la moitié de la taille dans les deux sens, les pixels 8 bits ont été envoyés à la PlayStation 2 comme une image 32 bits : ils sont rangés par blocs de 16 × 16 pixels, en colonnes de 16 × 4 où chaque mot de 32 bits contient quatre pixels de deux lignes. Le décodeur les remet en lignes avec la formule habituelle des outils publics de textures PS2 (`texture::unswizzle8`). Vérifié à l'œil sur les ballons (n° 1 : hexagones blancs et pentagone noir, illisibles lus dans l'ordre). Les 24 textures de ballons sont rangées ainsi.
+
 ## Mis de côté (signalés, pas devinés)
 
 | Cas | Nombre | Hypothèse |
@@ -38,7 +42,7 @@ Exemple : 66 688 octets = 128 (en-tête) + 1024 (palette de 256 couleurs) + 256 
 | Dimensions nulles | 19 | palettes seules |
 | Fichier qui s'arrête avant ses pixels (128 ou 1152 octets) | environ 1500 | variantes de couleur : palette pour les pixels de la texture précédente du même conteneur |
 | Position de la palette = position des pixels | environ 2000 | palette dans un autre fichier (textures de visage de l'éditeur ; section « palettes » de la carte) |
-| Taille d'envoi = moitié de la taille (offsets 40 et 42) | 48 | pixels rangés comme une image 32 bits (« swizzle » PS2), pas encore pris en charge |
+| Taille d'envoi = moitié de la taille (offsets 40 et 42), pixels 4 bits | — | pixels rangés comme une image 32 bits (« swizzle » PS2), pas encore pris en charge en 4 bits |
 
 Bilan dans `0_text.afs` : 5165 textures décodées, 3173 mises de côté.
 

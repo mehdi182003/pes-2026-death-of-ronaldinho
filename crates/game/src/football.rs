@@ -7,7 +7,9 @@ use asset_bridge::pes6::{Pes6, Pes6Error, PesFile};
 use bevy::input::mouse::{AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::prelude::*;
 use bevy_bridge::{BevyBridgePlugin, ModelSpawner, SpawnOptions};
+use bevy_rapier3d::prelude::*;
 
+use crate::ball::{self, Ball};
 use crate::capture::CapturePlugin;
 use crate::pitch;
 
@@ -15,21 +17,42 @@ use crate::pitch;
 const STADIUM: &str = "0_text:6949";
 /// The texture of its goal nets.
 const NET_TEXTURE: &str = "0_text:6949/1/43";
+/// The balls of `0_text.afs`: a model, then its texture, from file 0 to
+/// file 47. The match uses the first one whose texture can be read (some
+/// are stored swizzled, which is not handled yet).
+const BALLS: std::ops::Range<usize> = 0..24;
 
 /// What the match needs from the player's games, loaded before start.
 #[derive(Resource)]
 struct MatchAssets {
     stadium: Model,
     stadium_textures: Vec<Texture>,
+    ball: Model,
+    ball_texture: Texture,
 }
 
 fn load_assets(paths: &GamePaths) -> Result<MatchAssets, Pes6Error> {
     let pes = Pes6::open(&paths.pes6)?;
     let stadium: PesFile = STADIUM.parse().map_err(Pes6Error::Missing)?;
     let (stadium, stadium_textures) = pes.load_scenery(&stadium)?;
+    let file = |index: usize| PesFile {
+        archive: "0_text".into(),
+        index,
+        path: Vec::new(),
+    };
+    let ball_texture = BALLS
+        .filter_map(|ball| pes.load_texture(&file(2 * ball + 1)).ok())
+        .next()
+        .ok_or_else(|| Pes6Error::Missing("aucun ballon lisible dans 0_text.afs".into()))?;
+    let ball = pes.load_model(
+        &file(ball_texture_model(&ball_texture)),
+        Some(&ball_texture.name),
+    )?;
     Ok(MatchAssets {
         stadium,
         stadium_textures,
+        ball,
+        ball_texture,
     })
 }
 
@@ -50,15 +73,28 @@ pub fn run(paths: &GamePaths, capture: CapturePlugin) -> AppExit {
             }),
             ..default()
         }))
-        .add_plugins((BevyBridgePlugin, capture))
+        .add_plugins((
+            BevyBridgePlugin,
+            RapierPhysicsPlugin::<NoUserData>::default(),
+            capture,
+        ))
         .insert_resource(ClearColor(Color::srgb(0.08, 0.08, 0.10)))
         .insert_resource(GlobalAmbientLight {
             brightness: 700.0,
             ..default()
         })
         .insert_resource(assets)
-        .add_systems(Startup, (spawn_stadium, spawn_goals, setup))
-        .add_systems(Update, (zoom_camera, follow_focus).chain())
+        .add_systems(Startup, (spawn_stadium, spawn_goals, spawn_ball, setup))
+        .add_systems(
+            Update,
+            (
+                ball::apply_forces,
+                keep_ball_in_play,
+                zoom_camera,
+                follow_focus,
+            )
+                .chain(),
+        )
         .run()
 }
 
@@ -93,6 +129,63 @@ fn spawn_goals(
         .find(|texture| texture.name == NET_TEXTURE)
         .map(|texture| images.add(bevy_bridge::texture_image(texture)));
     pitch::spawn_goals(&mut commands, &mut meshes, &mut materials, net);
+    pitch::spawn_colliders(&mut commands);
+}
+
+/// The model file of a ball texture: the file just before it.
+fn ball_texture_model(texture: &Texture) -> usize {
+    let index: PesFile = texture
+        .name
+        .parse()
+        .expect("textures are named after their file");
+    index.index - 1
+}
+
+/// Where the ball is put for a kick-off.
+const KICK_OFF: Vec3 = Vec3::new(0.0, ball::RADIUS, 0.0);
+
+/// The PES ball on the centre spot, scaled to the size of a real one.
+fn spawn_ball(mut spawner: ModelSpawner, assets: Res<MatchAssets>) {
+    let (model, _) = spawner.spawn(
+        &assets.ball,
+        std::slice::from_ref(&assets.ball_texture),
+        SpawnOptions::default(),
+    );
+    let radius = model_radius(&assets.ball);
+    let commands = spawner.commands();
+    commands
+        .entity(model)
+        .insert(Transform::from_scale(Vec3::splat(ball::RADIUS / radius)));
+    commands
+        .spawn((
+            Transform::from_translation(KICK_OFF),
+            Visibility::default(),
+            ball::body(),
+            CameraFocus,
+        ))
+        .add_child(model);
+}
+
+/// Largest distance of a vertex from the origin: the radius of a ball.
+fn model_radius(model: &Model) -> f32 {
+    model
+        .meshes
+        .iter()
+        .flat_map(|mesh| &mesh.positions)
+        .map(|p| Vec3::from_array(*p).length())
+        .fold(0.0, f32::max)
+        .max(1e-3)
+}
+
+/// A ball that leaves the stadium (over the walls) goes back to the centre.
+fn keep_ball_in_play(mut balls: Query<(&mut Transform, &mut Velocity), With<Ball>>) {
+    for (mut transform, mut velocity) in &mut balls {
+        let p = transform.translation;
+        if p.x.abs() > pitch::BOARD_X + 2.0 || p.z.abs() > pitch::BOARD_Z + 2.0 || p.y < -1.0 {
+            transform.translation = KICK_OFF;
+            *velocity = Velocity::zero();
+        }
+    }
 }
 
 /// What the camera keeps in view (the ball, once there is one).

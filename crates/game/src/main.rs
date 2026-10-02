@@ -7,6 +7,7 @@
 //!
 //! `--capture <file.png>` saves a picture of the window, then quits.
 
+mod ball;
 mod capture;
 mod football;
 mod pitch;

@@ -50,6 +50,9 @@ pub struct TextureHeader {
     /// Number by which models name the texture (offset 12), see
     /// `model::PesModel::texture_ids`.
     pub id: u32,
+    /// 8-bit pixels stored in the order of a 32-bit image of half the size
+    /// (see [`unswizzle8`]).
+    pub swizzled: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -104,10 +107,12 @@ impl TextureHeader {
         }
         // HYPOTHÈSE: offsets 40 and 42 give the size the pixels were
         // uploaded with. Equal to the size for nearly all textures; half of
-        // it in both directions for 16 of them, whose pixels are then laid
-        // out as a 32-bit image (PlayStation 2 swizzle, not handled yet).
+        // it in both directions for some of them (the balls among others),
+        // whose pixels are then laid out as a 32-bit image (PlayStation 2
+        // swizzle): undone for 8-bit pixels, not handled yet for 4-bit ones.
         let (stored_width, stored_height) = (u16_at(40), u16_at(42));
-        if (stored_width, stored_height) == (width / 2, height / 2) {
+        let swizzled = (stored_width, stored_height) == (width / 2, height / 2);
+        if swizzled && format == PixelFormat::Indexed4 {
             return Err(TextureError::Swizzled {
                 width,
                 height,
@@ -123,6 +128,7 @@ impl TextureHeader {
             pixel_offset: usize::from(u16_at(16)),
             file_size: u32::from_le_bytes(header[8..12].try_into().unwrap()) as usize,
             id: u32::from_le_bytes(header[12..16].try_into().unwrap()),
+            swizzled,
         })
     }
 }
@@ -145,6 +151,28 @@ pub struct DecodedTexture {
 // of the game have smoother gradients than the stored order.
 fn stored_palette_index(index: usize) -> usize {
     (index & !0x18) | ((index & 0x08) << 1) | ((index & 0x10) >> 1)
+}
+
+/// Puts back in rows the 8-bit pixels of a texture uploaded to the
+/// PlayStation 2 as a 32-bit image (GS memory layout: blocks of 16 × 16
+/// pixels, columns of 16 × 4 pixels in which each 32-bit word holds four
+/// pixels of two rows). The usual formula of the public PlayStation 2
+/// texture tools.
+// HYPOTHÈSE: checked by eye on the balls (0_text:1: hexagons and a
+// pentagon), whose pixels are a striped mess when read in order.
+pub fn unswizzle8(stored: &[u8], width: usize, height: usize) -> Vec<u8> {
+    let mut rows = vec![0; width * height];
+    for y in 0..height {
+        for x in 0..width {
+            let block = (y & !0xf) * width + (x & !0xf) * 2;
+            let swap = (((y + 2) >> 2) & 1) * 4;
+            let row_in_column = (((y & !3) >> 1) + (y & 1)) & 7;
+            let column = row_in_column * width * 2 + ((x + swap) & 7) * 4;
+            let byte = ((y >> 1) & 1) + ((x >> 2) & 2);
+            rows[y * width + x] = stored.get(block + column + byte).copied().unwrap_or(0);
+        }
+    }
+    rows
 }
 
 /// Decodes a texture file into RGBA pixels.
@@ -195,7 +223,14 @@ pub fn decode(bytes: &[u8]) -> Result<DecodedTexture, TextureError> {
         })
         .collect();
 
-    let pixels = &bytes[header.pixel_offset..pixels_end];
+    let stored_pixels = &bytes[header.pixel_offset..pixels_end];
+    let unswizzled;
+    let pixels = if header.swizzled {
+        unswizzled = unswizzle8(stored_pixels, width, height);
+        &unswizzled[..]
+    } else {
+        stored_pixels
+    };
     let mut rgba8 = Vec::with_capacity(width * height * 4);
     for index in 0..width * height {
         let entry = match header.format {
@@ -284,15 +319,35 @@ mod tests {
     }
 
     #[test]
+    fn unswizzling_moves_every_pixel_once() {
+        // 256 different bytes in one 16 × 16 block: each comes out once,
+        // in another order.
+        let stored: Vec<u8> = (0..=255).collect();
+        let rows = unswizzle8(&stored, 16, 16);
+        let mut sorted = rows.clone();
+        sorted.sort_unstable();
+        assert_eq!(sorted, stored);
+        assert_ne!(rows, stored);
+        // The first row of a block takes bytes from the first two words of
+        // each 32-bit column.
+        assert_eq!(&rows[..4], &[0, 4, 8, 12]);
+    }
+
+    #[test]
     fn rejects_unsupported_textures() {
         let palette = vec![[0u8; 4]; 256];
-        let mut swizzled = texture(0x13, 4, 4, &palette, &[0; 16]);
+        // Swizzled 4-bit pixels are not handled; 8-bit ones are.
+        let mut swizzled = texture(0x14, 4, 4, &palette[..16], &[0; 8]);
         swizzled[40..42].copy_from_slice(&2u16.to_le_bytes());
         swizzled[42..44].copy_from_slice(&2u16.to_le_bytes());
         assert!(matches!(
             decode(&swizzled),
             Err(TextureError::Swizzled { .. })
         ));
+        let mut swizzled = texture(0x13, 4, 4, &palette, &[0; 16]);
+        swizzled[40..42].copy_from_slice(&2u16.to_le_bytes());
+        swizzled[42..44].copy_from_slice(&2u16.to_le_bytes());
+        assert!(decode(&swizzled).is_ok());
 
         let empty = texture(0x13, 0, 0, &palette, &[]);
         assert_eq!(decode(&empty), Err(TextureError::PaletteOnly));
