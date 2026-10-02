@@ -11,11 +11,52 @@ mod ball;
 mod capture;
 mod football;
 mod pitch;
+mod player;
 mod range;
 mod shooting;
 
 use asset_bridge::config;
 use bevy::prelude::*;
+
+/// The font of the texts on screen, loaded once at start-up.
+#[derive(Resource, Clone)]
+struct HudFont(Handle<Font>);
+
+/// A font of the system that has the accented letters of French; the font
+/// built into Bevy lacks some. Bevy's is used when none is found.
+const SYSTEM_FONTS: &[&str] = &[
+    "C:/Windows/Fonts/segoeui.ttf",
+    "C:/Windows/Fonts/arial.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/System/Library/Fonts/Supplemental/Arial.ttf",
+];
+
+/// Loads [`HudFont`] before the scenes are set up.
+struct HudFontPlugin;
+
+impl Plugin for HudFontPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_systems(PreStartup, load_hud_font);
+    }
+}
+
+fn load_hud_font(mut commands: Commands, mut fonts: ResMut<Assets<Font>>) {
+    let handle = SYSTEM_FONTS
+        .iter()
+        .find_map(|path| std::fs::read(path).ok())
+        .map(|bytes| fonts.add(Font::from_bytes(bytes)))
+        .unwrap_or_default();
+    commands.insert_resource(HudFont(handle));
+}
+
+impl HudFont {
+    fn text(&self, size: f32) -> TextFont {
+        TextFont {
+            font: self.0.clone().into(),
+            ..TextFont::from_font_size(size)
+        }
+    }
+}
 
 fn main() -> AppExit {
     // The game never starts without valid paths to the player's own copies

@@ -48,7 +48,12 @@ pub fn run(paths: &GamePaths, capture: CapturePlugin) -> AppExit {
             }),
             ..default()
         }))
-        .add_plugins((BevyBridgePlugin, ShootingPlugin, capture))
+        .add_plugins((
+            BevyBridgePlugin,
+            crate::HudFontPlugin,
+            ShootingPlugin,
+            capture,
+        ))
         .insert_resource(ClearColor(Color::srgb(0.55, 0.72, 0.88)))
         .insert_resource(GlobalAmbientLight {
             brightness: 500.0,
@@ -83,6 +88,7 @@ fn setup_world(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    font: Res<crate::HudFont>,
 ) {
     commands.spawn((
         Mesh3d(meshes.add(Plane3d::default().mesh().size(60.0, 60.0))),
@@ -128,7 +134,7 @@ fn setup_world(
              Touches 1, 2, 3 : Colt 45, Uzi, Ruger\n\
              Clic droit + glisser : tourner la caméra, molette : zoom",
         ),
-        TextFont::from_font_size(15.0),
+        font.text(15.0),
         Node {
             position_type: PositionType::Absolute,
             top: Val::Px(12.0),
@@ -139,7 +145,7 @@ fn setup_world(
     commands.spawn((
         WeaponLabel,
         Text::new(""),
-        TextFont::from_font_size(22.0),
+        font.text(22.0),
         Node {
             position_type: PositionType::Absolute,
             bottom: Val::Px(16.0),

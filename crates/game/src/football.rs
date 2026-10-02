@@ -1,9 +1,12 @@
 //! The football match, in a stadium of PES 6, seen from the stand like the
 //! wide camera of PES.
 
+use std::sync::Arc;
+
 use asset_bridge::config::GamePaths;
-use asset_bridge::model::{Model, Texture};
-use asset_bridge::pes6::{Pes6, Pes6Error, PesFile};
+use asset_bridge::model::{Animation, Model, Texture};
+use asset_bridge::pes6::{Pes6, Pes6Error, PesFile, PlayerParts};
+use asset_bridge::vice_city::ViceCity;
 use bevy::input::mouse::{AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::prelude::*;
 use bevy_bridge::{BevyBridgePlugin, ModelSpawner, SpawnOptions};
@@ -12,6 +15,7 @@ use bevy_rapier3d::prelude::*;
 use crate::ball::{self, Ball};
 use crate::capture::CapturePlugin;
 use crate::pitch;
+use crate::player::{self, PlayerAssets, PlayerPlugin, PowerGauge, Stride};
 
 /// The stadium played in: the Sapporo dome of PES 6.
 const STADIUM: &str = "0_text:6949";
@@ -31,7 +35,109 @@ struct MatchAssets {
     ball_texture: Texture,
 }
 
-fn load_assets(paths: &GamePaths) -> Result<MatchAssets, Pes6Error> {
+/// The controlled player: the field player of milestone J6, in the readable
+/// training kit.
+const PLAYER_BODY: &str = "0_text:1010";
+const PLAYER_KIT: &str = "0_text:419";
+const PLAYER_BOOTS: &str = "0_text:5322/0/0";
+const PLAYER_HEAD: &str = "0_text:1943";
+const PLAYER_HAIR: &str = "0_text:4570";
+
+/// Vice City animations played by the PES player, retargeted (see
+/// `retarget`): standing, walking, jogging, running, sprinting, in the order
+/// of `player::Gait`, then the pass and the shot.
+// HYPOTHÈSE: until PES animations are read, these are the closest of
+// ped.ifp; KICK_floor and FIGHTlngkck are kicks of street fights.
+const GAITS: [&str; 5] = [
+    "IDLE_stance",
+    "WALK_player",
+    "JOG_maleA",
+    "run_player",
+    "sprint_civi",
+];
+const PASS: &str = "KICK_floor";
+const SHOT: &str = "FIGHTlngkck";
+
+type LoadError = Box<dyn std::error::Error>;
+
+fn file(text: &str) -> Result<PesFile, Pes6Error> {
+    text.parse().map_err(Pes6Error::Missing)
+}
+
+fn load_player(paths: &GamePaths, pes: &Pes6) -> Result<PlayerAssets, LoadError> {
+    let mut vice_city = ViceCity::open(&paths.vice_city)?;
+    let tommy = vice_city.load_model("player")?;
+    let animations = vice_city.load_animations("ped")?;
+    let (model, textures) = pes.load_player(&PlayerParts {
+        body: file(PLAYER_BODY)?,
+        kit: Some(file(PLAYER_KIT)?),
+        boots: Some(file(PLAYER_BOOTS)?),
+        head: Some(file(PLAYER_HEAD)?),
+        hair: Some(file(PLAYER_HAIR)?),
+    })?;
+    let retargeted = |name: &str, in_place: bool| -> Result<Animation, LoadError> {
+        let source = animations
+            .iter()
+            .find(|animation| animation.name.eq_ignore_ascii_case(name))
+            .ok_or_else(|| format!("{name} absente de ped.ifp"))?;
+        Ok(retarget::retarget(
+            source,
+            &tommy,
+            &model,
+            retarget::PES6_FROM_VICE_CITY,
+            retarget::VICE_CITY_ANIMATION_TO_COMMON,
+            in_place,
+        )?)
+    };
+    let stride = |name: &str| -> Result<Stride, LoadError> {
+        let moving = retargeted(name, false)?;
+        Ok(Stride {
+            animation: Arc::new(retargeted(name, true)?),
+            speed: ground_speed(&moving),
+        })
+    };
+    let gaits = [
+        stride(GAITS[0])?,
+        stride(GAITS[1])?,
+        stride(GAITS[2])?,
+        stride(GAITS[3])?,
+        stride(GAITS[4])?,
+    ];
+    let soles = model
+        .meshes
+        .iter()
+        .filter(|mesh| mesh.skin.is_some())
+        .flat_map(|mesh| mesh.positions.iter().map(|p| p[1]))
+        .fold(0.0f32, f32::min);
+    let pass = Arc::new(retargeted(PASS, true)?);
+    let shot = Arc::new(retargeted(SHOT, true)?);
+    Ok(PlayerAssets {
+        model: Arc::new(model),
+        textures,
+        gaits,
+        pass,
+        shot,
+        soles,
+    })
+}
+
+/// Ground speed of a retargeted animation, in m/s: how far its root moves
+/// horizontally over one cycle (PES units).
+fn ground_speed(animation: &Animation) -> f32 {
+    let Some(keys) = animation.tracks.first().map(|track| &track.keys) else {
+        return 0.0;
+    };
+    let (Some(first), Some(last)) = (
+        keys.first().and_then(|k| k.translation),
+        keys.last().and_then(|k| k.translation),
+    ) else {
+        return 0.0;
+    };
+    let travel = Vec2::new(last[0] - first[0], last[2] - first[2]).length();
+    travel / retarget::PES6_UNITS_PER_METRE / animation.duration.max(1e-3)
+}
+
+fn load_assets(paths: &GamePaths) -> Result<(MatchAssets, PlayerAssets), LoadError> {
     let pes = Pes6::open(&paths.pes6)?;
     let stadium: PesFile = STADIUM.parse().map_err(Pes6Error::Missing)?;
     let (stadium, stadium_textures) = pes.load_scenery(&stadium)?;
@@ -48,20 +154,24 @@ fn load_assets(paths: &GamePaths) -> Result<MatchAssets, Pes6Error> {
         &file(ball_texture_model(&ball_texture)),
         Some(&ball_texture.name),
     )?;
-    Ok(MatchAssets {
-        stadium,
-        stadium_textures,
-        ball,
-        ball_texture,
-    })
+    let player = load_player(paths, &pes)?;
+    Ok((
+        MatchAssets {
+            stadium,
+            stadium_textures,
+            ball,
+            ball_texture,
+        },
+        player,
+    ))
 }
 
 /// Runs the match.
 pub fn run(paths: &GamePaths, capture: CapturePlugin) -> AppExit {
-    let assets = match load_assets(paths) {
+    let (assets, player_assets) = match load_assets(paths) {
         Ok(assets) => assets,
         Err(err) => {
-            eprintln!("Chaos FC ne peut pas démarrer : lecture de PES 6 impossible.\n\n{err}");
+            eprintln!("Chaos FC ne peut pas démarrer : lecture des jeux impossible.\n\n{err}");
             return AppExit::error();
         }
     };
@@ -76,6 +186,8 @@ pub fn run(paths: &GamePaths, capture: CapturePlugin) -> AppExit {
         .add_plugins((
             BevyBridgePlugin,
             RapierPhysicsPlugin::<NoUserData>::default(),
+            crate::HudFontPlugin,
+            PlayerPlugin,
             capture,
         ))
         .insert_resource(ClearColor(Color::srgb(0.08, 0.08, 0.10)))
@@ -84,7 +196,11 @@ pub fn run(paths: &GamePaths, capture: CapturePlugin) -> AppExit {
             ..default()
         })
         .insert_resource(assets)
-        .add_systems(Startup, (spawn_stadium, spawn_goals, spawn_ball, setup))
+        .insert_resource(player_assets)
+        .add_systems(
+            Startup,
+            (spawn_stadium, spawn_goals, spawn_ball, spawn_player, setup),
+        )
         .add_systems(
             Update,
             (
@@ -166,6 +282,13 @@ fn spawn_ball(mut spawner: ModelSpawner, assets: Res<MatchAssets>) {
         .add_child(model);
 }
 
+/// Where the player stands at kick-off, facing the goal at +X.
+const PLAYER_KICK_OFF: Vec3 = Vec3::new(-1.2, 0.0, 0.3);
+
+fn spawn_player(mut spawner: ModelSpawner, assets: Res<PlayerAssets>) {
+    player::spawn(&mut spawner, &assets, PLAYER_KICK_OFF, Vec3::X);
+}
+
 /// Largest distance of a vertex from the origin: the radius of a ball.
 fn model_radius(model: &Model) -> f32 {
     model
@@ -227,7 +350,7 @@ impl BroadcastCamera {
     }
 }
 
-fn setup(mut commands: Commands) {
+fn setup(mut commands: Commands, font: Res<crate::HudFont>) {
     let camera = BroadcastCamera {
         target: Vec3::ZERO,
         zoom: 1.0,
@@ -236,7 +359,7 @@ fn setup(mut commands: Commands) {
         Camera3d::default(),
         Projection::Perspective(PerspectiveProjection {
             // PES films the match with a narrow lens from far.
-            fov: 34f32.to_radians(),
+            fov: 15f32.to_radians(),
             ..default()
         }),
         camera.transform(),
@@ -245,13 +368,32 @@ fn setup(mut commands: Commands) {
     commands.spawn((
         Text::new(
             "Chaos FC - jalon J7\n\
+             Flèches ou ZQSD : courir   Maj gauche : sprint\n\
+             K : passe   L : tir (maintenir pour la puissance)\n\
+             Manette : stick gauche, gâchette droite, A / croix, B / rond\n\
              Molette : zoom",
         ),
-        TextFont::from_font_size(15.0),
+        font.text(15.0),
         Node {
             position_type: PositionType::Absolute,
             top: Val::Px(12.0),
             left: Val::Px(12.0),
+            ..default()
+        },
+    ));
+    spawn_power_gauge(&mut commands, &font);
+}
+
+/// The shot power bar, at the bottom of the screen.
+fn spawn_power_gauge(commands: &mut Commands, font: &crate::HudFont) {
+    commands.spawn((
+        PowerGauge,
+        Text::new(""),
+        font.text(22.0),
+        Node {
+            position_type: PositionType::Absolute,
+            bottom: Val::Px(16.0),
+            left: Val::Px(20.0),
             ..default()
         },
     ));
