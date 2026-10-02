@@ -622,14 +622,20 @@ fn mesh_skin(model: &PesModel, part: usize) -> MeshSkin {
             draw_of[usize::from(index)].get_or_insert(draw);
         }
     }
-    let bones = usize::from(model.parts[part].format.bones);
+    // A vertex with weights may use any of its four slots, whatever the
+    // number of bones of its part: (0, 0, 255, 0) is common in parts of two
+    // or three bones (body n° 1010).
+    let slots = match model.parts[part].format.bones {
+        0 | 1 => 1,
+        _ => 4,
+    };
     let (joints, weights) = vertices
         .iter()
         .zip(draw_of)
         .map(|(vertex, draw)| {
             let mut joints = [0u16; 4];
             let mut weights = [0.0f32; 4];
-            for slot in 0..bones.clamp(1, 4) {
+            for slot in 0..slots {
                 let bone = draw.and_then(|draw| model.skeleton_bone(draw, vertex.joints[slot]));
                 if let Some(bone) = bone {
                     joints[slot] = bone as u16;

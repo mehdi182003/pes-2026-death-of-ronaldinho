@@ -39,6 +39,8 @@ Formats vus dans le jeu (taille, drapeaux : nombre de parties) : (40, 2) 6028, (
 
 Les normales n'ont pas toujours une longueur de 1 (8 dans les visages) : la conversion les ramène à 1.
 
+**Poids** : dès qu'une partie a 2 os ou plus, un sommet peut mettre ses poids dans n'importe lequel des quatre emplacements, quel que soit le nombre d'os de la partie : `(0, 0, 255, 0)` est courant dans les parties à 2 ou 3 os (corps n° 1010). Chaque poids va avec le numéro d'os du même emplacement (le meilleur appariement, testé contre toutes les permutations sur les corps n° 995 et 1010). Ne lire que les premiers emplacements laisse des sommets sans os : une main restée sur le bassin s'étire de près d'un mètre pendant la course (test `pes_body_mesh_follows_its_bones_while_running`).
+
 ## Bande d'indices
 
 Une suite de blocs : un nombre (u16) puis autant d'indices (u16), jusqu'à un nombre nul ou la fin de la section. Les indices sont **locaux à la partie** dessinée. Les dessins se raccordent par des triangles dégénérés (indices répétés).
