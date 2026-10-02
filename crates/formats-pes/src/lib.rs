@@ -9,4 +9,6 @@
 
 pub mod afs;
 pub mod content;
+pub mod model;
 pub mod packed;
+pub mod texture;

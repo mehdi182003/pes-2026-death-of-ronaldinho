@@ -1,11 +1,14 @@
 //! Asset viewer: shows a textured Vice City model, in its bind pose (T-pose
 //! for a character) or playing an animation in a loop, or the textures of a
-//! TXD laid flat.
+//! TXD laid flat. A PES 6 model can be shown alone or next to it, playing
+//! the same animation.
 //!
 //! ```sh
 //! cargo run -p asset-tools --bin viewer -- player
 //! cargo run -p asset-tools --bin viewer -- player --anim run_player
 //! cargo run -p asset-tools --bin viewer -- --textures D:\ViceCity\txd\LOADSC0.TXD
+//! cargo run -p asset-tools --bin viewer -- player --pes 0_text:1010 --pes-texture 0_text:419 --pes-boots 0_text:5322/0/0 --pes-head 0_text:1943 --pes-hair 0_text:4570
+//! cargo run -p asset-tools --bin viewer -- player --anim run_player --pes 0_text:1010 --pes-texture 0_text:419 --pes-boots 0_text:5322/0/0 --pes-head 0_text:1943 --pes-hair 0_text:4570
 //! ```
 
 use std::f32::consts::FRAC_PI_2;
@@ -15,10 +18,12 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use asset_bridge::config::{self, Game};
 use asset_bridge::model::{self as neutral, Animation, Model, Texture};
+use asset_bridge::pes6::{Pes6, PesFile, PlayerParts};
 use asset_bridge::vice_city::{self, ViceCity, ViceCityError};
 use asset_tools::source::Source;
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::prelude::*;
+use bevy::render::view::window::screenshot::{Screenshot, save_to_disk};
 use bevy::transform::TransformSystems;
 use bevy_bridge::{
     AnimationLayer, AnimationLayers, BevyBridgePlugin, BindPose, ModelSpawner, SpawnOptions,
@@ -29,12 +34,37 @@ use clap::Parser;
 #[derive(Parser)]
 #[command(
     name = "viewer",
-    about = "Visualiseur de modèles, d'animations et de textures de GTA Vice City"
+    about = "Visualiseur de modèles, d'animations et de textures de GTA Vice City et de PES 6"
 )]
 struct Args {
     /// Modèle de models/gta3.img, par exemple player ou colt45.
-    #[arg(required_unless_present = "textures")]
+    #[arg(required_unless_present_any = ["textures", "pes"])]
     model: Option<String>,
+
+    /// Corps de joueur de PES 6, <archive>:<numéro>[/<sous-fichier>] (par
+    /// exemple 0_text:995) : seul, ou à côté du modèle de Vice City. Avec
+    /// --anim, il joue la même animation que lui.
+    #[arg(long, conflicts_with = "textures")]
+    pes: Option<PesFile>,
+
+    /// Tenue du joueur de PES 6 : maillot, short et chaussettes (par exemple
+    /// 0_text:419).
+    #[arg(long, requires = "pes")]
+    pes_texture: Option<PesFile>,
+
+    /// Chaussures du joueur de PES 6 (par exemple 0_text:5322/0/0).
+    #[arg(long, requires = "pes")]
+    pes_boots: Option<PesFile>,
+
+    /// Coiffure du joueur de PES 6 : son modèle et sa texture (par exemple
+    /// 0_text:4570).
+    #[arg(long, requires = "pes")]
+    pes_hair: Option<PesFile>,
+
+    /// Tête à placer sur le modèle de PES 6 : ses modèles et sa texture
+    /// (par exemple 0_text:1943).
+    #[arg(long, requires = "pes")]
+    pes_head: Option<PesFile>,
 
     /// Dictionnaire de textures du modèle (par défaut : celui du même nom).
     #[arg(long)]
@@ -55,6 +85,15 @@ struct Args {
     /// Fichier de configuration (par défaut : $CHAOS_FC_CONFIG, sinon ./config.toml).
     #[arg(long)]
     config: Option<PathBuf>,
+
+    /// Enregistre une capture de la fenêtre dans ce fichier PNG, puis ferme.
+    #[arg(long)]
+    capture: Option<PathBuf>,
+
+    /// Angle de départ de la caméra autour du modèle, en degrés (0 : de
+    /// face, 180 : de dos).
+    #[arg(long, default_value_t = 34.0)]
+    yaw: f32,
 }
 
 fn main() -> AppExit {
@@ -88,6 +127,11 @@ fn main() -> AppExit {
             ..default()
         })
         .insert_resource(scene)
+        .insert_resource(Capture {
+            path: args.capture.clone(),
+            frame: 0,
+        })
+        .insert_resource(StartYaw(args.yaw.to_radians()))
         .insert_resource(Options {
             skeleton: true,
             mesh: true,
@@ -96,7 +140,10 @@ fn main() -> AppExit {
             playing: true,
         })
         .add_systems(Startup, setup)
-        .add_systems(Update, (handle_keys, orbit_camera, update_help).chain())
+        .add_systems(
+            Update,
+            (handle_keys, orbit_camera, update_help, capture).chain(),
+        )
         // After transform propagation, so that the skeleton follows the
         // skinned mesh of the same frame.
         .add_systems(PostUpdate, draw_gizmos.after(TransformSystems::Propagate))
@@ -111,7 +158,26 @@ fn load(args: &Args) -> Result<ViewerScene> {
         return Ok(ViewerScene::new(board, textures, true, None, None));
     }
 
-    let name = args.model.as_deref().expect("clap requires a model");
+    let pes_scene = match &args.pes {
+        Some(body) => Some(load_pes(
+            &config_file,
+            &PlayerParts {
+                body: body.clone(),
+                kit: args.pes_texture.clone(),
+                boots: args.pes_boots.clone(),
+                head: args.pes_head.clone(),
+                hair: args.pes_hair.clone(),
+            },
+        )?),
+        None => None,
+    };
+    let Some(name) = args.model.as_deref() else {
+        if args.anim.is_some() {
+            anyhow::bail!("--anim demande un modèle de Vice City, par exemple player");
+        }
+        let (model, textures) = pes_scene.expect("clap requires a model or --pes");
+        return Ok(ViewerScene::new(model, textures, false, None, None));
+    };
     let vice_city = config::read_paths(&config_file)?.check(Game::ViceCity)?;
     let mut game = ViceCity::open(&vice_city)?;
     let model = game.load_model(name)?;
@@ -136,7 +202,194 @@ fn load(args: &Args) -> Result<ViewerScene> {
         }
         None => None,
     };
-    Ok(ViewerScene::new(model, textures, false, note, animation))
+    let Some((pes_model, pes_textures)) = pes_scene else {
+        return Ok(ViewerScene::new(model, textures, false, note, animation));
+    };
+    let mut textures = textures;
+    textures.extend(pes_textures);
+    let Some(animation) = animation else {
+        return Ok(ViewerScene::new(
+            beside(model, pes_model),
+            textures,
+            false,
+            note,
+            None,
+        ));
+    };
+    let (model, animation) = running_beside(model, pes_model, &animation)?;
+    Ok(ViewerScene::new(
+        model,
+        textures,
+        false,
+        note,
+        Some(Arc::new(animation)),
+    ))
+}
+
+/// `base`, playing `animation`, with `other` one metre to its right playing
+/// the same animation retargeted to its skeleton, the lowest points of both
+/// at the same height. Both stand like Vice City animations, along +Z.
+fn running_beside(
+    base: Model,
+    mut other: Model,
+    animation: &Animation,
+) -> Result<(Model, Animation)> {
+    let retargeted = retarget::retarget(
+        animation,
+        &base,
+        &other,
+        retarget::PES6_FROM_VICE_CITY,
+        retarget::VICE_CITY_ANIMATION_TO_COMMON,
+        true,
+    )?;
+    // Bones are matched by name ignoring case: keep the PES bones apart
+    // from Tommy's ("head" and "Head").
+    for node in &mut other.nodes {
+        node.name = format!("PES {}", node.name);
+    }
+    let tracks = retargeted.tracks.into_iter().map(|track| neutral::Track {
+        bone_name: format!("PES {}", track.bone_name),
+        ..track
+    });
+
+    let to_animation =
+        Mat4::from_quat(Quat::from_array(retarget::VICE_CITY_ANIMATION_TO_COMMON).inverse());
+    // Height of the soles: the lowest joint over the animation, minus how
+    // far the mesh goes below the lowest joint in the bind pose.
+    let sole = |model: &Model, animation: &Animation, frame: Mat4| {
+        let bind = BindPose::of(model);
+        let lowest_vertex = lowest_point(model);
+        let lowest_joint = bind
+            .worlds
+            .iter()
+            .map(|world| world.w_axis.y)
+            .fold(f32::MAX, f32::min);
+        let lowest_moving = (0..=16)
+            .flat_map(|step| {
+                let time = animation.duration * step as f32 / 16.0;
+                retarget::pose(model, animation, time)
+                    .into_iter()
+                    .map(move |world| (frame * world).w_axis.z)
+            })
+            .fold(f32::MAX, f32::min);
+        lowest_moving - (lowest_joint - lowest_vertex)
+    };
+    let retargeted = Animation {
+        tracks: tracks.collect(),
+        ..retargeted
+    };
+    let lift = sole(&base, animation, Mat4::IDENTITY) - sole(&other, &retargeted, to_animation);
+    place(
+        &mut other,
+        Mat4::from_translation(Vec3::new(1.0, 0.0, lift)) * to_animation,
+    );
+    let mut both = animation.clone();
+    both.tracks.extend(retargeted.tracks);
+    Ok((merge(base, other), both))
+}
+
+/// Lowest vertex of `model` in its bind pose.
+fn lowest_point(model: &Model) -> f32 {
+    let bind = BindPose::of(model);
+    model
+        .meshes
+        .iter()
+        .flat_map(|mesh| {
+            let world = bind.worlds[mesh.node];
+            mesh.positions
+                .iter()
+                .map(move |&p| world.transform_point3(Vec3::from_array(p)).y)
+        })
+        .fold(f32::MAX, f32::min)
+}
+
+/// A PES 6 player and its textures, the model scaled to metres.
+fn load_pes(config_file: &std::path::Path, parts: &PlayerParts) -> Result<(Model, Vec<Texture>)> {
+    let pes6 = config::read_paths(config_file)?.check(Game::Pes6)?;
+    let pes = Pes6::open(&pes6)?;
+    let (mut model, textures) = pes.load_player(parts)?;
+    // PES models are Y-up like the viewer; only the units change.
+    place(
+        &mut model,
+        Mat4::from_scale(Vec3::splat(1.0 / retarget::PES6_UNITS_PER_METRE)),
+    );
+    Ok((model, textures))
+}
+
+/// Moves the whole of `model` by `transform`: its root node, and the bind
+/// pose of its skeleton with the vertices that follow it (skinned vertices
+/// and inverse bind matrices are in the model's space).
+fn place(model: &mut Model, transform: Mat4) {
+    let root = &mut model.nodes[0];
+    root.local = (transform * Mat4::from_cols_array(&root.local)).to_cols_array();
+    let Some(skeleton) = &mut model.skeleton else {
+        return;
+    };
+    let inverse = transform.inverse();
+    for bone in &mut skeleton.bones {
+        bone.inverse_bind = (Mat4::from_cols_array(&bone.inverse_bind) * inverse).to_cols_array();
+    }
+    let turn = Mat3::from_mat4(transform);
+    for mesh in model.meshes.iter_mut().filter(|mesh| mesh.skin.is_some()) {
+        for position in &mut mesh.positions {
+            *position = transform
+                .transform_point3(Vec3::from_array(*position))
+                .to_array();
+        }
+        for normal in mesh.normals.iter_mut().flatten() {
+            *normal = (turn * Vec3::from_array(*normal))
+                .normalize_or_zero()
+                .to_array();
+        }
+    }
+}
+
+/// `base` with `other` added one metre to its right (+X), feet at the same
+/// height, both in their bind pose.
+fn beside(base: Model, mut other: Model) -> Model {
+    let lift = lowest_point(&base) - lowest_point(&other);
+    place(
+        &mut other,
+        Mat4::from_translation(Vec3::new(1.0, lift, 0.0)),
+    );
+    merge(base, other)
+}
+
+/// One model holding both, their skeletons merged.
+fn merge(mut base: Model, other: Model) -> Model {
+    let shift = base.nodes.len();
+    let bone_shift = base.skeleton.as_ref().map_or(0, |s| s.bones.len());
+    for node in other.nodes {
+        base.nodes.push(neutral::Node {
+            parent: node.parent.map(|parent| parent + shift),
+            ..node
+        });
+    }
+    base.meshes.extend(other.meshes.into_iter().map(|mut mesh| {
+        for joints in mesh.skin.iter_mut().flat_map(|skin| &mut skin.joints) {
+            *joints = joints.map(|joint| joint + bone_shift as u16);
+        }
+        neutral::Mesh {
+            node: mesh.node + shift,
+            ..mesh
+        }
+    }));
+    if let Some(skeleton) = other.skeleton {
+        let bones = skeleton.bones.into_iter().map(|bone| neutral::Bone {
+            node: bone.node + shift,
+            ..bone
+        });
+        match &mut base.skeleton {
+            Some(base) => base.bones.extend(bones),
+            None => {
+                base.skeleton = Some(neutral::Skeleton {
+                    bones: bones.collect(),
+                })
+            }
+        }
+    }
+    base.name = format!("{} + {}", base.name, other.name);
+    base
 }
 
 /// Lays textures side by side on upright quads one metre high, so that they
@@ -299,6 +552,42 @@ impl Options {
 #[derive(Component)]
 struct ModelRoot;
 
+/// `--capture`: where to save a picture of the window, and the frames
+/// drawn so far.
+/// `--yaw`, in radians.
+#[derive(Resource)]
+struct StartYaw(f32);
+
+#[derive(Resource)]
+struct Capture {
+    path: Option<PathBuf>,
+    frame: u32,
+}
+
+/// Frame at which the picture is taken: meshes and textures are on screen
+/// by then.
+const CAPTURE_FRAME: u32 = 240;
+
+/// Saves the picture at [`CAPTURE_FRAME`], then closes the viewer once the
+/// file had time to be written.
+fn capture(
+    mut commands: Commands,
+    mut capture: ResMut<Capture>,
+    mut exits: MessageWriter<AppExit>,
+) {
+    let Some(path) = capture.path.clone() else {
+        return;
+    };
+    capture.frame += 1;
+    if capture.frame == CAPTURE_FRAME {
+        commands
+            .spawn(Screenshot::primary_window())
+            .observe(save_to_disk(path));
+    } else if capture.frame == CAPTURE_FRAME + 30 {
+        exits.write(AppExit::Success);
+    }
+}
+
 #[derive(Component)]
 struct HelpText;
 
@@ -311,11 +600,11 @@ struct Orbit {
 }
 
 impl Orbit {
-    /// Frames bounds seen slightly from above, three-quarters.
-    fn framing(min: Vec3, max: Vec3) -> Self {
+    /// Frames bounds seen slightly from above, from the angle `yaw`.
+    fn framing(min: Vec3, max: Vec3, yaw: f32) -> Self {
         Self {
             target: (min + max) / 2.0,
-            yaw: 0.6,
+            yaw,
             pitch: -0.25,
             distance: (max - min).length().max(0.5) * 1.3,
         }
@@ -328,7 +617,12 @@ impl Orbit {
     }
 }
 
-fn setup(mut spawner: ModelSpawner, scene: Res<ViewerScene>, options: Res<Options>) {
+fn setup(
+    mut spawner: ModelSpawner,
+    scene: Res<ViewerScene>,
+    options: Res<Options>,
+    start_yaw: Res<StartYaw>,
+) {
     let root_transform = options.root_transform();
     let (root, _) = spawner.spawn(
         &scene.model,
@@ -346,7 +640,7 @@ fn setup(mut spawner: ModelSpawner, scene: Res<ViewerScene>, options: Res<Option
     }
 
     let (min, max) = scene.displayed_bounds(&root_transform);
-    let orbit = Orbit::framing(min, max);
+    let orbit = Orbit::framing(min, max, start_yaw.0);
     commands.spawn((Camera3d::default(), orbit.transform(), orbit));
     commands.spawn((
         DirectionalLight {
@@ -375,6 +669,7 @@ fn handle_keys(
     mut roots: Query<(&mut Transform, Option<&mut AnimationLayers>), With<ModelRoot>>,
     mut meshes: Query<&mut Visibility, With<Mesh3d>>,
     mut cameras: Query<&mut Orbit>,
+    start_yaw: Res<StartYaw>,
 ) {
     // Letters at the same place on AZERTY and QWERTY keyboards.
     if keys.just_pressed(KeyCode::KeyS) {
@@ -414,7 +709,7 @@ fn handle_keys(
     if turn || keys.just_pressed(KeyCode::KeyF) {
         let (min, max) = scene.displayed_bounds(&options.root_transform());
         for mut orbit in &mut cameras {
-            *orbit = Orbit::framing(min, max);
+            *orbit = Orbit::framing(min, max, start_yaw.0);
         }
     }
 }
@@ -423,8 +718,13 @@ fn orbit_camera(
     buttons: Res<ButtonInput<MouseButton>>,
     motion: Res<AccumulatedMouseMotion>,
     scroll: Res<AccumulatedMouseScroll>,
+    capture: Res<Capture>,
     mut cameras: Query<(&mut Orbit, &mut Transform)>,
 ) {
+    // A capture keeps the framing it starts with, whatever the mouse does.
+    if capture.path.is_some() {
+        return;
+    }
     let Ok((mut orbit, mut transform)) = cameras.single_mut() else {
         return;
     };

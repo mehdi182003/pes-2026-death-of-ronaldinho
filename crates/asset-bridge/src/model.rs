@@ -7,6 +7,23 @@
 /// Column-major 4x4 matrix, the convention of glam and Bevy.
 pub type Mat4 = [f32; 16];
 
+pub const IDENTITY: Mat4 = [
+    1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+];
+
+/// `a · b`: the transform `b`, then `a`.
+pub fn multiply(a: &Mat4, b: &Mat4) -> Mat4 {
+    std::array::from_fn(|at| {
+        let (column, row) = (at / 4, at % 4);
+        (0..4).map(|k| a[4 * k + row] * b[4 * column + k]).sum()
+    })
+}
+
+/// Where `m` takes the point `p`.
+pub fn transform_point(m: &Mat4, p: [f32; 3]) -> [f32; 3] {
+    std::array::from_fn(|i| m[i] * p[0] + m[4 + i] * p[1] + m[8 + i] * p[2] + m[12 + i])
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Model {
     pub name: String,
@@ -28,6 +45,16 @@ impl Model {
             .flat_map(|mesh| &mesh.primitives)
             .map(|primitive| primitive.indices.len() / 3)
             .sum()
+    }
+
+    /// Transform from `node` to the model, composing the nodes' own
+    /// transforms (not the bind pose of the skeleton).
+    pub fn node_world(&self, node: usize) -> Mat4 {
+        let local = &self.nodes[node].local;
+        match self.nodes[node].parent {
+            Some(parent) => multiply(&self.node_world(parent), local),
+            None => *local,
+        }
     }
 }
 
@@ -201,4 +228,49 @@ pub struct Weapon {
     /// Range of a shot, in metres.
     pub range: f32,
     pub fire_sound: Sound,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn translation(x: f32, y: f32, z: f32) -> Mat4 {
+        let mut m = IDENTITY;
+        m[12..15].copy_from_slice(&[x, y, z]);
+        m
+    }
+
+    #[test]
+    fn matrices_compose_right_to_left() {
+        // A quarter turn around Z (X becomes Y), then a move along X.
+        let turn = [
+            0.0, 1.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+        ];
+        let m = multiply(&translation(5.0, 0.0, 0.0), &turn);
+        assert_eq!(transform_point(&m, [1.0, 0.0, 0.0]), [5.0, 1.0, 0.0]);
+        assert_eq!(multiply(&IDENTITY, &turn), turn);
+    }
+
+    #[test]
+    fn node_world_composes_the_parents() {
+        let node = |parent, local| Node {
+            name: String::new(),
+            parent,
+            local,
+            bone_id: None,
+        };
+        let model = Model {
+            name: String::new(),
+            nodes: vec![
+                node(None, translation(1.0, 0.0, 0.0)),
+                node(Some(0), translation(0.0, 2.0, 0.0)),
+            ],
+            meshes: Vec::new(),
+            skeleton: None,
+        };
+        assert_eq!(
+            transform_point(&model.node_world(1), [0.0; 3]),
+            [1.0, 2.0, 0.0]
+        );
+    }
 }

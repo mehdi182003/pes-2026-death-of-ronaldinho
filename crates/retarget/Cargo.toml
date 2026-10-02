@@ -7,3 +7,6 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+asset-bridge.workspace = true
+glam.workspace = true
+thiserror.workspace = true

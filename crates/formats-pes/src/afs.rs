@@ -2,8 +2,9 @@
 //! (offset, size) pairs, then the files, each starting on a 2048-byte
 //! boundary.
 //!
-//! Layout checked on the three archives of the PES 6 PC demo (`0_text.afs`,
-//! `e_text.afs`, `0_sound.afs`), see `docs/formats/afs.md`.
+//! Layout checked on the four archives of the full PES 6 PC game
+//! (`0_text.afs`, `0_sound.afs`, `f_text.afs`, `f_sound.afs`), see
+//! `docs/formats/afs.md`.
 
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom};
@@ -28,8 +29,7 @@ pub struct AfsEntry {
 }
 
 impl AfsEntry {
-    /// The PES 6 demo leaves most slots of `0_text.afs` empty (6035 of
-    /// 7152): files of the full game that were removed.
+    /// None in the full game; the PC demo leaves most of its slots empty.
     pub fn is_empty(&self) -> bool {
         self.size == 0
     }
@@ -83,9 +83,10 @@ impl AfsTable {
     /// Whether the pair after the table describes a usable name directory:
     /// one 48-byte record per slot, outside the data of every file.
     ///
-    /// It is not the case in the PES 6 demo: in its three archives, the
-    /// size is right (48 bytes per slot) but the offset falls in the middle
-    /// of another file, and the bytes there are not names.
+    /// In the full game, only `0_text.afs` passes this test, and even there
+    /// the records are not readable names (random-looking bytes, like the
+    /// encrypted files); in the other archives the offset falls in the
+    /// middle of another file. Names are therefore not used.
     pub fn has_directory(&self) -> bool {
         let (offset, size) = self.directory;
         let start = u64::from(offset);
@@ -223,7 +224,7 @@ mod tests {
         let mut data = Vec::new();
         for file in files {
             if file.is_empty() {
-                // Empty slots of the demo still point somewhere.
+                // Empty slots still point somewhere.
                 bytes.extend(offset.to_le_bytes());
                 bytes.extend(0u32.to_le_bytes());
                 continue;
@@ -273,7 +274,7 @@ mod tests {
         };
         // After the files, one record per slot: usable.
         assert!(table((6144, 96)).has_directory());
-        // Inside the second file, as in the PES 6 demo.
+        // Inside the second file, as in three archives of PES 6.
         assert!(!table((4096, 96)).has_directory());
         // Wrong size for two slots.
         assert!(!table((6144, 48)).has_directory());
