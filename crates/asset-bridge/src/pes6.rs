@@ -10,7 +10,9 @@ use formats_pes::content::{self, Extracted, Kind};
 use formats_pes::model::{self as pes_model, ModelError, PesModel};
 use formats_pes::texture::{self as pes_texture, TextureError};
 
-use crate::model::{Material, Mesh, Model, Node, Primitive, Texture};
+use crate::model::{
+    Bone, IDENTITY, Material, Mesh, MeshSkin, Model, Node, Primitive, Skeleton, Texture, multiply,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Pes6Error {
@@ -137,10 +139,11 @@ impl Pes6 {
     }
 
     /// A player assembled from a body, its kit, its boots, its head and its
-    /// hair. Each texture slot of the body gets its texture (see
-    /// [`PlayerSlot::classify`]); the first model of `head` and of `hair`,
-    /// each with the first texture of its file, are placed on the body's
-    /// head bone. Returns the model and its textures.
+    /// hair: a skinned model (see [`convert_model`]). Each texture slot of
+    /// the body gets its texture (see [`PlayerSlot::classify`]); the first
+    /// model of `head` and of `hair`, each with the first texture of its
+    /// file, are placed on the node of the body's head bone. Returns the
+    /// model and its textures.
     pub fn load_player(&self, parts: &PlayerParts) -> Result<(Model, Vec<Texture>), Pes6Error> {
         let mut textures = Vec::new();
         let mut load = |file: Option<&PesFile>| -> Result<Option<String>, Pes6Error> {
@@ -194,19 +197,12 @@ impl Pes6 {
         // HYPOTHÈSE: the head bone is the one whose joint is highest (bone
         // 16 of the 19-bone bodies, at 670.6 units). Head and hair models
         // are in its space (their bounds match: nose towards +X, hair
-        // covering the back of the skull towards -X).
-        let bone = parsed
-            .bones
-            .iter()
-            .max_by(|a, b| a.joint()[1].total_cmp(&b.joint()[1]))
+        // covering the back of the skull towards -X); they move with its
+        // node.
+        let bone = (0..parsed.bones.len())
+            .max_by(|&a, &b| parsed.bones[a].joint()[1].total_cmp(&parsed.bones[b].joint()[1]))
             .ok_or_else(|| Pes6Error::Missing(format!("{found} : pas de squelette")))?;
-        let node = model.nodes.len();
-        model.nodes.push(Node {
-            name: "tête".into(),
-            parent: Some(0),
-            local: bone.bind_matrix(),
-            bone_id: None,
-        });
+        let node = bone + 1;
         let mut name = found.to_string();
         if let Some(head) = &parts.head {
             // HYPOTHÈSE: a head file holds the same head twice (514 and 114
@@ -471,10 +467,11 @@ impl fmt::Display for PesFile {
     }
 }
 
-/// Converts a PES model to the neutral types: one node, one mesh per vertex
-/// part, one primitive per texture slot of that part. Coordinates stay in
-/// PES units (see `retarget::PES6_UNITS_PER_METRE`); there is no skeleton
-/// yet (J6).
+/// Converts a PES model to the neutral types: a root node, one mesh per
+/// vertex part, one primitive per texture slot of that part. Coordinates
+/// stay in PES units (see `retarget::PES6_UNITS_PER_METRE`). A model with
+/// bones (a body) gets one node per bone under the root, in the bind pose,
+/// named after [`BODY_BONES`], and its meshes are skinned.
 // HYPOTHÈSE: one texture for every slot is enough for the referee's model,
 // whose single texture covers the whole body; players will need a texture
 // per slot (kit, skin, boots...).
@@ -533,26 +530,123 @@ pub fn convert_model_with(
                         })
                     })
                     .collect(),
-                skin: None,
+                skin: (!model.bones.is_empty()).then(|| mesh_skin(model, index)),
             }
         })
         .collect();
+    let mut nodes = vec![Node {
+        name: "root".into(),
+        parent: None,
+        local: IDENTITY,
+        bone_id: None,
+    }];
+    // Node of bone `i`: `i + 1`. Each local transform takes the bone's space
+    // to its parent bone's space (or the model's, for the root bone).
+    for (index, bone) in model.bones.iter().enumerate() {
+        let local = match bone.parent {
+            Some(parent) => multiply(
+                &model.bones[parent].inverse_bind_matrix(),
+                &bone.bind_matrix(),
+            ),
+            None => bone.bind_matrix(),
+        };
+        nodes.push(Node {
+            name: bone_name(model, index),
+            parent: Some(bone.parent.map_or(0, |parent| parent + 1)),
+            local,
+            bone_id: None,
+        });
+    }
+    let skeleton = (!model.bones.is_empty()).then(|| Skeleton {
+        bones: model
+            .bones
+            .iter()
+            .enumerate()
+            .map(|(index, bone)| Bone {
+                name: bone_name(model, index),
+                node: index + 1,
+                inverse_bind: bone.inverse_bind_matrix(),
+            })
+            .collect(),
+    });
     Model {
         name: name.to_owned(),
-        nodes: vec![Node {
-            name: "root".into(),
-            parent: None,
-            local: IDENTITY,
-            bone_id: None,
-        }],
+        nodes,
         meshes,
-        skeleton: None,
+        skeleton,
     }
 }
 
-const IDENTITY: [f32; 16] = [
-    1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+/// Names of the 19 bones of a body, from where their joints are on body
+/// n° 1010 (see `docs/formats/pes-model.md`). "Left" is the player's left,
+/// +X, the body facing +Z.
+// HYPOTHÈSE: every body with 19 bones has the same layout; they all share
+// the same parents.
+pub const BODY_BONES: [&str; 19] = [
+    "pelvis",
+    "hips",
+    "left thigh",
+    "right thigh",
+    "left calf",
+    "right calf",
+    "spine",
+    "left clavicle",
+    "right clavicle",
+    "left upper arm",
+    "right upper arm",
+    "neck",
+    "left foot",
+    "right foot",
+    "left forearm",
+    "right forearm",
+    "head",
+    "left hand",
+    "right hand",
 ];
+
+fn bone_name(model: &PesModel, index: usize) -> String {
+    match model.bones.len() {
+        19 => BODY_BONES[index].to_owned(),
+        _ => format!("bone {index}"),
+    }
+}
+
+/// Bones and weights of the vertices of part `part`, through the bone table
+/// of the first draw that uses each vertex. A vertex no draw uses, or whose
+/// bone is not in the table, follows the root bone.
+fn mesh_skin(model: &PesModel, part: usize) -> MeshSkin {
+    let vertices = &model.parts[part].vertices;
+    let mut draw_of = vec![None; vertices.len()];
+    for draw in model.draws.iter().filter(|draw| draw.part == part) {
+        for &index in draw.triangles.iter().flatten() {
+            draw_of[usize::from(index)].get_or_insert(draw);
+        }
+    }
+    let bones = usize::from(model.parts[part].format.bones);
+    let (joints, weights) = vertices
+        .iter()
+        .zip(draw_of)
+        .map(|(vertex, draw)| {
+            let mut joints = [0u16; 4];
+            let mut weights = [0.0f32; 4];
+            for slot in 0..bones.clamp(1, 4) {
+                let bone = draw.and_then(|draw| model.skeleton_bone(draw, vertex.joints[slot]));
+                if let Some(bone) = bone {
+                    joints[slot] = bone as u16;
+                    weights[slot] = f32::from(vertex.weights[slot]);
+                }
+            }
+            let total: f32 = weights.iter().sum();
+            if total > 0.0 {
+                weights = weights.map(|w| w / total);
+            } else {
+                (joints, weights) = ([0; 4], [1.0, 0.0, 0.0, 0.0]);
+            }
+            (joints, weights)
+        })
+        .unzip();
+    MeshSkin { joints, weights }
+}
 
 fn normalized(v: [f32; 3]) -> [f32; 3] {
     let length = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();

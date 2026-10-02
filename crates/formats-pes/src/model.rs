@@ -172,6 +172,19 @@ impl Bone {
         std::array::from_fn(|i| -(r[0][i] * t[0] + r[1][i] * t[1] + r[2][i] * t[2]))
     }
 
+    /// The record itself, from the model to the bone's space, as a
+    /// column-major 4 × 4 matrix: the inverse bind matrix of skinning.
+    pub fn inverse_bind_matrix(&self) -> [f32; 16] {
+        let r = self.rotation();
+        let t = self.translation;
+        [
+            r[0][0], r[1][0], r[2][0], 0.0, //
+            r[0][1], r[1][1], r[2][1], 0.0, //
+            r[0][2], r[1][2], r[2][2], 0.0, //
+            t[0], t[1], t[2], 1.0,
+        ]
+    }
+
     /// Transform from the bone's space to the model, as a column-major 4 × 4
     /// matrix (the inverse of the record).
     pub fn bind_matrix(&self) -> [f32; 16] {
@@ -645,6 +658,17 @@ mod tests {
         let m = head.bind_matrix();
         assert_eq!([m[12], m[13], m[14]], joint);
         assert!((m[2] - 1.0).abs() < 1e-5, "{m:?}");
+
+        // The record and the bind matrix undo each other.
+        let apply = |m: &[f32; 16], p: [f32; 3]| -> [f32; 3] {
+            std::array::from_fn(|i| m[i] * p[0] + m[4 + i] * p[1] + m[8 + i] * p[2] + m[12 + i])
+        };
+        let point = [1.0, 2.0, 3.0];
+        let back = apply(&head.inverse_bind_matrix(), apply(&m, point));
+        assert!(
+            back.iter().zip(point).all(|(a, b)| (a - b).abs() < 1e-3),
+            "{back:?}"
+        );
     }
 
     #[test]

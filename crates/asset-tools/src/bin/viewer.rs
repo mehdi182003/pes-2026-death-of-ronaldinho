@@ -210,14 +210,44 @@ fn load_pes(config_file: &std::path::Path, parts: &PlayerParts) -> Result<(Model
     let pes = Pes6::open(&pes6)?;
     let (mut model, textures) = pes.load_player(parts)?;
     // PES models are Y-up like the viewer; only the units change.
-    let scale = Mat4::from_scale(Vec3::splat(1.0 / retarget::PES6_UNITS_PER_METRE));
-    model.nodes[0].local = (scale * Mat4::from_cols_array(&model.nodes[0].local)).to_cols_array();
+    place(
+        &mut model,
+        Mat4::from_scale(Vec3::splat(1.0 / retarget::PES6_UNITS_PER_METRE)),
+    );
     Ok((model, textures))
 }
 
+/// Moves the whole of `model` by `transform`: its root node, and the bind
+/// pose of its skeleton with the vertices that follow it (skinned vertices
+/// and inverse bind matrices are in the model's space).
+fn place(model: &mut Model, transform: Mat4) {
+    let root = &mut model.nodes[0];
+    root.local = (transform * Mat4::from_cols_array(&root.local)).to_cols_array();
+    let Some(skeleton) = &mut model.skeleton else {
+        return;
+    };
+    let inverse = transform.inverse();
+    for bone in &mut skeleton.bones {
+        bone.inverse_bind = (Mat4::from_cols_array(&bone.inverse_bind) * inverse).to_cols_array();
+    }
+    let turn = Mat3::from_mat4(transform);
+    for mesh in model.meshes.iter_mut().filter(|mesh| mesh.skin.is_some()) {
+        for position in &mut mesh.positions {
+            *position = transform
+                .transform_point3(Vec3::from_array(*position))
+                .to_array();
+        }
+        for normal in mesh.normals.iter_mut().flatten() {
+            *normal = (turn * Vec3::from_array(*normal))
+                .normalize_or_zero()
+                .to_array();
+        }
+    }
+}
+
 /// `base` with `other` added one metre to its right (+X), feet at the same
-/// height, both in their bind pose.
-fn beside(mut base: Model, other: Model) -> Model {
+/// height, both in their bind pose. Their skeletons are merged.
+fn beside(mut base: Model, mut other: Model) -> Model {
     let lowest = |model: &Model| {
         let bind = BindPose::of(model);
         model
@@ -232,24 +262,41 @@ fn beside(mut base: Model, other: Model) -> Model {
             .fold(f32::MAX, f32::min)
     };
     let lift = lowest(&base) - lowest(&other);
-    let shift = base.nodes.len() + 1;
-    base.nodes.push(neutral::Node {
-        name: other.name.clone(),
-        parent: None,
-        local: Mat4::from_translation(Vec3::new(1.0, lift, 0.0)).to_cols_array(),
-        bone_id: None,
-    });
+    place(
+        &mut other,
+        Mat4::from_translation(Vec3::new(1.0, lift, 0.0)),
+    );
+    let shift = base.nodes.len();
+    let bone_shift = base.skeleton.as_ref().map_or(0, |s| s.bones.len());
     for node in other.nodes {
         base.nodes.push(neutral::Node {
-            parent: Some(node.parent.map_or(shift - 1, |parent| parent + shift)),
+            parent: node.parent.map(|parent| parent + shift),
             ..node
         });
     }
-    base.meshes
-        .extend(other.meshes.into_iter().map(|mesh| neutral::Mesh {
+    base.meshes.extend(other.meshes.into_iter().map(|mut mesh| {
+        for joints in mesh.skin.iter_mut().flat_map(|skin| &mut skin.joints) {
+            *joints = joints.map(|joint| joint + bone_shift as u16);
+        }
+        neutral::Mesh {
             node: mesh.node + shift,
             ..mesh
-        }));
+        }
+    }));
+    if let Some(skeleton) = other.skeleton {
+        let bones = skeleton.bones.into_iter().map(|bone| neutral::Bone {
+            node: bone.node + shift,
+            ..bone
+        });
+        match &mut base.skeleton {
+            Some(base) => base.bones.extend(bones),
+            None => {
+                base.skeleton = Some(neutral::Skeleton {
+                    bones: bones.collect(),
+                })
+            }
+        }
+    }
     base.name = format!("{} + {}", base.name, other.name);
     base
 }

@@ -5,6 +5,7 @@
 //! check properties rather than exact counts.
 
 use asset_bridge::config::Game;
+use asset_bridge::model::transform_point;
 use asset_bridge::pes6::{self, Pes6, PlayerParts, PlayerSlot};
 use asset_bridge::testing::game_dir;
 use formats_pes::content::{self, Kind, Packing, Report};
@@ -365,8 +366,8 @@ fn player_body_gets_its_head_on_the_shoulders() {
     assert!(body_materials.contains(&Some("0_text:419".into())));
     assert!(body_materials.contains(&Some("0_text:5322/0/0".into())));
     assert!(body_materials.contains(&None), "peau");
-    let head = model.nodes.iter().position(|n| n.name == "tête").unwrap();
-    let m = model.nodes[head].local;
+    let head = model.nodes.iter().position(|n| n.name == "head").unwrap();
+    let m = model.node_world(head);
     let heights: Vec<f32> = model
         .meshes
         .iter()
@@ -400,6 +401,57 @@ fn player_body_gets_its_head_on_the_shoulders() {
         .unwrap();
     let nose_z = m[2] * nose[0] + m[6] * nose[1] + m[10] * nose[2] + m[14];
     assert!(nose_z > 30.0, "nez en z = {nose_z}");
+}
+
+#[test]
+fn player_body_is_skinned_and_keeps_its_shape_in_the_bind_pose() {
+    let Some(dir) = game_dir(Game::Pes6) else {
+        return;
+    };
+    let pes = Pes6::open(&dir).unwrap();
+    let model = pes
+        .load_model(&"0_text:1010".parse().unwrap(), None)
+        .unwrap();
+    let skeleton = model.skeleton.as_ref().expect("squelette");
+    assert_eq!(skeleton.bones.len(), 19);
+    assert_eq!(model.nodes.len(), 20, "racine et un nœud par os");
+    // The joints are where the nodes put them: the left hip at +X.
+    let joint = |name: &str| {
+        let node = model.nodes.iter().position(|n| n.name == name).unwrap();
+        transform_point(&model.node_world(node), [0.0; 3])
+    };
+    let hip = joint("left thigh");
+    assert!(
+        (hip[0] - 37.6).abs() < 0.5 && (hip[1] - 380.8).abs() < 0.5,
+        "{hip:?}"
+    );
+    let wrist = joint("right hand");
+    assert!((wrist[0] + 297.3).abs() < 0.5, "{wrist:?}");
+
+    // Skinning in the bind pose gives back every vertex: the nodes and the
+    // inverse bind matrices agree.
+    let mut worst = 0.0f32;
+    for mesh in &model.meshes {
+        let skin = mesh.skin.as_ref().expect("maillage skinné");
+        for ((position, joints), weights) in
+            mesh.positions.iter().zip(&skin.joints).zip(&skin.weights)
+        {
+            let mut skinned = [0.0; 3];
+            for (&bone, &weight) in joints.iter().zip(weights) {
+                let bone = &skeleton.bones[usize::from(bone)];
+                let to_bone = transform_point(&bone.inverse_bind, *position);
+                let back = transform_point(&model.node_world(bone.node), to_bone);
+                for i in 0..3 {
+                    skinned[i] += weight * back[i];
+                }
+            }
+            let error = (0..3)
+                .map(|i| (skinned[i] - position[i]).abs())
+                .fold(0.0, f32::max);
+            worst = worst.max(error);
+        }
+    }
+    assert!(worst < 0.05, "écart {worst}");
 }
 
 #[test]
