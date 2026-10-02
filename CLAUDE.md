@@ -28,7 +28,9 @@ Le brief de référence est [`docs/BRIEF.md`](docs/BRIEF.md). **Le relire avant 
 cargo fmt --all
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
-cargo run -p game                               # lance le jeu (lit ./config.toml) : scène de tir de J3
+cargo run -p game                               # lance le match (lit ./config.toml), dans le stade de PES
+cargo run -p game -- tir                        # scène de tir de J3
+cargo run -p asset-tools --bin viewer -- --pes-scenery 0_text:6949 --yaw 0 --zoom 0.22 --look-at 0,0,0   # stade de PES 6
 cargo run -p asset-tools -- check-config        # vérifie les chemins sans compiler Bevy
 cargo run -p asset-tools -- img list --filter player   # contenu de models/gta3.img de Vice City
 cargo run -p asset-tools -- dump vc:player.dff       # dump annoté d'un fichier RenderWare

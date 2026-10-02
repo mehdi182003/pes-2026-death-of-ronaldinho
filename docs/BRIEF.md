@@ -203,6 +203,17 @@ Références : le wiki GTAMods (pages RenderWare, DFF, TXD, IFP, IMG), librw et 
 - Le visualiseur fait jouer une animation de Vice City à Tommy et, retargetée, au joueur PES placé à côté (`--anim run_player --pes …`).
 - Les animations propres à PES (format `07 12 01 20`, HYPOTHÈSE) ne sont pas encore lues : le critère de J6 est rempli avec une animation de Vice City. Elles restent à étudier pour J7 et J8 (course, passe, tir des joueurs PES).
 
+**Constats (J7)**, détaillés dans `docs/formats/pes-stadium.md` : les stades sont dans `0_text.afs` au-delà de la carte communautaire (groupes de 11 fichiers à partir du n° 6940). Le n° 6949 est le dôme de Sapporo complet : pelouse et motif de tonte, lignes, panneaux, tribunes, toit, écran géant, bancs, photographes et staff. Un modèle nomme ses textures par numéro (table à l'offset 12), les conteneurs ont des emplacements vides (position 0), les stades sont Y vers le bas à 51,3 unités par mètre. Les textures des ballons sont rangées en swizzle PS2 (décodé). Les buts et les filets de PES n'ont pas été trouvés.
+
+**Décisions (J7) :**
+
+- `cargo run -p game` lance le match ; la scène de tir de J3 devient `cargo run -p game -- tir`. `--capture <fichier.png>` enregistre une image puis ferme.
+- Le décor vient de PES (`Pes6::load_scenery`, stade 0_text:6949), affiché sans éclairage ajouté. Les buts sont faits aux dimensions réglementaires, habillés de la texture de filet du stade, en attendant ceux de PES. HYPOTHÈSE : masque de tonte atténué à 20 %.
+- Physique avec bevy_rapier3d : ballon de 22 cm et 430 g, traînée, effet (Magnus) et frottement du gazon calculés à part ; poteaux, barres, filets et murs invisibles aux panneaux.
+- Joueur contrôlé au clavier ou à la manette, caméra latérale serrée comme celle de PES ; animations de Vice City retargetées en attendant celles de PES.
+- Un but compte quand le ballon a entièrement franchi la ligne entre les poteaux et sous la barre ; score à l'écran, puis engagement au centre. Le « BUT ! » affiché est provisoire : les célébrations de PES viendront avec ses animations.
+- **Demande de Mehdi (2 octobre 2026)** : tout ce qu'on voit dans un match de PES doit venir de PES (entrée des joueurs, célébrations, public, sons...). Les animations PES passent donc avant le 3 contre 3 (jalon J7b).
+
 **Plan de repli pour les animations PES :** si elles restent illisibles après un effort raisonnable, utiliser des animations libres de droits (par exemple Mixamo) retargetées sur le squelette PES. Le jalon correspondant ne doit pas bloquer tout le projet.
 
 ## Méthode de reverse engineering
@@ -268,6 +279,7 @@ On valide d'abord que les assets des deux jeux sont lisibles (J1 à J5), avant d
 | J5 | Modèle joueur PES 6 | Un joueur PES texturé s'affiche à côté de Tommy, à la bonne échelle. **Validé le 2 octobre 2026 par Mehdi, avec réserves** (tenue lisible n° 419, les maillots d'équipes étant chiffrés ; numéros et nom pas affichés ; petites taches de peau sur les manches). |
 | J6 | Squelettes et retargeting | Une même animation joue correctement sur Tommy et sur un joueur PES. **Validé le 2 octobre 2026 par Mehdi** (`run_player` sur Tommy et sur le corps n° 1010 ; les animations propres à PES restent à lire). |
 | J7 | Foot minimal | Terrain, ballon physique, un joueur contrôlé, buts qui comptent. |
+| J7b | Animations PES | Les animations de PES (format `07 12 01 20`) lues et jouées : course, passe, tir, célébration, entrée des joueurs. |
 | J8 | 3 contre 3 avec IA basique | Un match jouable de bout en bout, sans Tommy. |
 | J9 | Tommy dans le match | Bascule foot/arme, joueurs abattus en ragdoll, corps persistants. Bazooka (roquette, explosion). |
 | J10 | Arbitre | L'arbitre poursuit et plaque Tommy après un tir. |

@@ -14,6 +14,7 @@ use bevy_rapier3d::prelude::*;
 
 use crate::ball::{self, Ball};
 use crate::capture::CapturePlugin;
+use crate::goals::{self, GoalBanner, GoalsPlugin, ScoreBoard};
 use crate::pitch;
 use crate::player::{self, PlayerAssets, PlayerPlugin, PowerGauge, Stride};
 
@@ -188,6 +189,7 @@ pub fn run(paths: &GamePaths, capture: CapturePlugin) -> AppExit {
             RapierPhysicsPlugin::<NoUserData>::default(),
             crate::HudFontPlugin,
             PlayerPlugin,
+            GoalsPlugin,
             capture,
         ))
         .insert_resource(ClearColor(Color::srgb(0.08, 0.08, 0.10)))
@@ -257,9 +259,6 @@ fn ball_texture_model(texture: &Texture) -> usize {
     index.index - 1
 }
 
-/// Where the ball is put for a kick-off.
-const KICK_OFF: Vec3 = Vec3::new(0.0, ball::RADIUS, 0.0);
-
 /// The PES ball on the centre spot, scaled to the size of a real one.
 fn spawn_ball(mut spawner: ModelSpawner, assets: Res<MatchAssets>) {
     let (model, _) = spawner.spawn(
@@ -274,7 +273,7 @@ fn spawn_ball(mut spawner: ModelSpawner, assets: Res<MatchAssets>) {
         .insert(Transform::from_scale(Vec3::splat(ball::RADIUS / radius)));
     commands
         .spawn((
-            Transform::from_translation(KICK_OFF),
+            Transform::from_translation(goals::BALL_KICK_OFF),
             Visibility::default(),
             ball::body(),
             CameraFocus,
@@ -282,11 +281,8 @@ fn spawn_ball(mut spawner: ModelSpawner, assets: Res<MatchAssets>) {
         .add_child(model);
 }
 
-/// Where the player stands at kick-off, facing the goal at +X.
-const PLAYER_KICK_OFF: Vec3 = Vec3::new(-1.2, 0.0, 0.3);
-
 fn spawn_player(mut spawner: ModelSpawner, assets: Res<PlayerAssets>) {
-    player::spawn(&mut spawner, &assets, PLAYER_KICK_OFF, Vec3::X);
+    player::spawn(&mut spawner, &assets, goals::PLAYER_KICK_OFF, Vec3::X);
 }
 
 /// Largest distance of a vertex from the origin: the radius of a ball.
@@ -305,7 +301,7 @@ fn keep_ball_in_play(mut balls: Query<(&mut Transform, &mut Velocity), With<Ball
     for (mut transform, mut velocity) in &mut balls {
         let p = transform.translation;
         if p.x.abs() > pitch::BOARD_X + 2.0 || p.z.abs() > pitch::BOARD_Z + 2.0 || p.y < -1.0 {
-            transform.translation = KICK_OFF;
+            transform.translation = goals::BALL_KICK_OFF;
             *velocity = Velocity::zero();
         }
     }
@@ -382,6 +378,29 @@ fn setup(mut commands: Commands, font: Res<crate::HudFont>) {
         },
     ));
     spawn_power_gauge(&mut commands, &font);
+    commands.spawn((
+        ScoreBoard,
+        Text::new("Chaos FC  0  -  0  Adversaires"),
+        font.text(24.0),
+        Node {
+            position_type: PositionType::Absolute,
+            top: Val::Px(12.0),
+            right: Val::Px(20.0),
+            ..default()
+        },
+    ));
+    commands.spawn((
+        GoalBanner,
+        Text::new(""),
+        font.text(72.0),
+        TextColor(Color::srgb(1.0, 0.85, 0.2)),
+        Node {
+            position_type: PositionType::Absolute,
+            top: Val::Percent(38.0),
+            left: Val::Percent(43.0),
+            ..default()
+        },
+    ));
 }
 
 /// The shot power bar, at the bottom of the screen.

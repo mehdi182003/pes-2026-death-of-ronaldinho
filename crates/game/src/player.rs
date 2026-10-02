@@ -147,6 +147,14 @@ pub fn spawn(spawner: &mut ModelSpawner, assets: &PlayerAssets, position: Vec3, 
         .add_child(body);
 }
 
+/// Puts the player back at `position`, still.
+pub fn reset(controlled: &mut Controlled, transform: &mut Transform, position: Vec3, facing: Vec3) {
+    controlled.velocity = Vec3::ZERO;
+    controlled.facing = facing;
+    controlled.charge = None;
+    *transform = Transform::from_translation(position).with_rotation(facing_rotation(facing));
+}
+
 /// PES bodies face +Z.
 fn facing_rotation(facing: Vec3) -> Quat {
     Quat::from_rotation_arc(Vec3::Z, facing.normalize_or(Vec3::Z))

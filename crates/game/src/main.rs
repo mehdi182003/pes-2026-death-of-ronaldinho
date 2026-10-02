@@ -10,6 +10,7 @@
 mod ball;
 mod capture;
 mod football;
+mod goals;
 mod pitch;
 mod player;
 mod range;
