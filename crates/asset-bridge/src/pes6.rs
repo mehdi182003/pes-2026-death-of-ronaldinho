@@ -173,6 +173,8 @@ impl Pes6 {
         let textured = |texture: &Option<String>| Material {
             base_color: [1.0; 4],
             texture: texture.clone(),
+            blend: false,
+            layer: 0,
         };
         let roles = PlayerSlot::classify(&parsed);
         let role = |slot: u16| {
@@ -187,6 +189,8 @@ impl Pes6 {
             PlayerSlot::Skin => Some(Material {
                 base_color: skin,
                 texture: None,
+                blend: false,
+                layer: 0,
             }),
             PlayerSlot::Marking => None,
         });
@@ -248,6 +252,80 @@ impl Pes6 {
         Ok(())
     }
 
+    /// Every model at or below `file`, each slot with the texture its
+    /// texture table names (by the number in the texture's header, among
+    /// the textures at or below `file`), as one model in PES stadium units.
+    /// For a stadium (`0_text:6949`): pitch, lines, boards, stands, roof.
+    /// Slots whose texture is missing are left out; textures with partial
+    /// transparency (lines, shadows) are blended.
+    pub fn load_scenery(&self, file: &PesFile) -> Result<(Model, Vec<Texture>), Pes6Error> {
+        let extracted = self.extract(file)?;
+        let at = |path: &[usize]| PesFile {
+            path: path.to_vec(),
+            ..file.clone()
+        };
+        let mut textures = Vec::new();
+        let mut by_id: Vec<(u32, String, bool)> = Vec::new();
+        for found in extracted.iter().filter(|e| e.kind == Kind::Texture) {
+            // Palettes alone and the like are skipped, as in the game they
+            // go with another texture.
+            let Ok(mut decoded) = pes_texture::decode(&found.data) else {
+                continue;
+            };
+            soften_mowing_mask(&mut decoded.rgba8);
+            let name = at(&found.path).to_string();
+            let blend = decoded
+                .rgba8
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .any(|pixel| (8..248).contains(&pixel[3]));
+            by_id.push((decoded.id, name.clone(), blend));
+            textures.push(Texture {
+                name,
+                width: decoded.width,
+                height: decoded.height,
+                rgba8: decoded.rgba8,
+            });
+        }
+        let mut scenery = Model {
+            name: file.to_string(),
+            nodes: vec![Node {
+                name: "root".into(),
+                parent: None,
+                local: IDENTITY,
+                bone_id: None,
+            }],
+            meshes: Vec::new(),
+            skeleton: None,
+        };
+        // In file order, as the game draws them.
+        let mut layer = 0u16;
+        for found in extracted.iter().filter(|e| e.kind == Kind::Model) {
+            let parsed = pes_model::parse(&found.data).map_err(|source| Pes6Error::Model {
+                file: at(&found.path),
+                source,
+            })?;
+            let material = |slot: u16| {
+                let id = u32::from(*parsed.texture_ids.get(usize::from(slot))?);
+                let (_, name, blend) = by_id.iter().find(|(known, _, _)| *known == id)?;
+                Some(Material {
+                    base_color: [1.0; 4],
+                    texture: Some(name.clone()),
+                    blend: *blend,
+                    layer: 0,
+                })
+            };
+            let mut converted = convert_model_with(&at(&found.path).to_string(), &parsed, material);
+            for primitive in converted.meshes.iter_mut().flat_map(|m| &mut m.primitives) {
+                layer = layer.saturating_add(1);
+                primitive.material.layer = layer;
+            }
+            scenery.meshes.extend(converted.meshes);
+        }
+        Ok((scenery, textures))
+    }
+
     fn first_of(&self, file: &PesFile, kind: Kind) -> Result<(PesFile, Vec<u8>), Pes6Error> {
         let label = kind.label();
         let found = self
@@ -260,6 +338,29 @@ impl Pes6 {
             ..file.clone()
         };
         Ok((path, found.data))
+    }
+}
+
+/// How much a mowing mask darkens the grass, as a fraction of its alpha.
+// HYPOTHÈSE: a texture all black and mostly opaque laid over the whole pitch
+// (0_text:6949/1/0: alpha from 180 to 254, holes in a grid) marks the
+// darker squares of the mowing pattern; at full alpha it turns the pitch
+// black, which the game does not show. 20 % until compared by eye with
+// the game.
+const MOWING_MASK_STRENGTH: f32 = 0.2;
+
+/// Weakens the alpha of a mowing mask (see [`MOWING_MASK_STRENGTH`]): an
+/// all-black texture whose visible pixels are mostly opaque. Shadows are
+/// black too but faint, and stay as they are.
+fn soften_mowing_mask(rgba8: &mut [u8]) {
+    let pixels = rgba8.as_chunks_mut::<4>().0;
+    let black = pixels.iter().all(|p| p[..3] == [0, 0, 0]);
+    let visible: Vec<u8> = pixels.iter().map(|p| p[3]).filter(|&a| a > 0).collect();
+    let opaque = visible.iter().filter(|&&a| a >= 128).count();
+    if black && !visible.is_empty() && opaque * 2 > visible.len() {
+        for pixel in pixels {
+            pixel[3] = (f32::from(pixel[3]) * MOWING_MASK_STRENGTH).round() as u8;
+        }
     }
 }
 
@@ -480,6 +581,8 @@ pub fn convert_model(name: &str, model: &PesModel, texture: Option<&str>) -> Mod
         Some(Material {
             base_color: [1.0; 4],
             texture: texture.map(str::to_owned),
+            blend: false,
+            layer: 0,
         })
     })
 }
@@ -781,6 +884,7 @@ mod tests {
                 })
                 .collect(),
             bones: Vec::new(),
+            texture_ids: Vec::new(),
             bone_tables: Vec::new(),
         };
         let converted = convert_model("test", &model, Some("tex"));

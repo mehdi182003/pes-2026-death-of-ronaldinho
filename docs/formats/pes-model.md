@@ -4,7 +4,7 @@ Signature `20 05 04 20`. Un modèle se compose de parties de sommets, d'une band
 
 ## Documentation publique
 
-Aucune description trouvée pour PES 6 (les outils publics visent les PES récents, au format `WESYS`). Tout ce qui suit vient des 9647 modèles du jeu complet PC : 9546 se lisent en entier, avec les vérifications ci-dessous.
+Aucune description trouvée pour PES 6 (les outils publics visent les PES récents, au format `WESYS`). Tout ce qui suit vient des modèles du jeu complet PC : 13 747 se lisent en entier (stades compris), avec les vérifications ci-dessous ; 387 utilisent une instruction encore inconnue.
 
 ## En-tête
 
@@ -13,7 +13,8 @@ u32 little-endian à partir de l'offset 4 :
 | Offset | Champ |
 | --- | --- |
 | 4 | fin du programme de dessin |
-| 8, 12 | inconnus |
+| 8 | inconnu |
+| 12 | table des textures : nombre (u16), puis un numéro (u16) par emplacement de l'instruction `02` (voir ci-dessous) ; 0 si aucune |
 | 16 | section des sommets |
 | 20 | bande d'indices (début) |
 | 24 | début du programme : toujours `0x48` |
@@ -87,6 +88,13 @@ HYPOTHÈSE : `R = Rz·Ry·Rx` (X d'abord). L'ordre `Ry·Rz·Rx`, essayé d'abord
 | 16 | 11 | (0 ; 670,6 ; −0,7) | tête |
 
 **Os des sommets** : le numéro d'os d'un sommet n'est pas un os du squelette mais une entrée de la table de l'instruction `03` qui précède le dessin. Sur le corps n° 1010, la table vaut `6 11 8 16 7 18 10 15 3 5 1 2 4 17 14 9 0 13 12` : les sommets de numéro 5 (centre à x = −343, la main) suivent l'os 18 (poignet à x = −297). Vérifié sur tout le jeu : les 573 corps à 19 os ont une seule table, permutation des 19 os, et 99,9 % des sommets qui suivent un seul os sont près de lui (test `body_vertices_lie_by_the_bones_of_their_bone_table` ; les exceptions sont surtout dans les n° 1116 à 1118).
+
+## Table des textures
+
+Le u32 à l'offset 12 donne la position de la table des textures. L'emplacement *k* d'un dessin prend la texture de numéro `table[k]` :
+
+- pour un **stade** ou un **ballon**, c'est le numéro écrit à l'offset 12 de l'en-tête de la texture (ballon n° 0 : `0x8c`, celui de la texture n° 1). Voir [pes-stadium.md](pes-stadium.md) ;
+- pour un **corps**, ce sont des numéros de rôle que le jeu remplit (corps n° 995 : `0x65 0x68 0x6a 0x70 0x71 0x7b`, soit peau, tenue, marquage, chaussures, col, mains d'après la géométrie des emplacements). HYPOTHÈSE : ces numéros pourront remplacer la déduction géométrique ci-dessous.
 
 ## Emplacements de texture d'un corps de joueur
 

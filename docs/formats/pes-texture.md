@@ -14,6 +14,7 @@ Little-endian.
 | --- | --- | --- | --- |
 | 0 | 4 octets | `94 72 85 29` | |
 | 8 | u32 | taille du fichier | égale à la taille réelle |
+| 12 | u32 | numéro de la texture | celui que donnent les tables de textures des modèles (stade n° 6949 : 0x2710 à 0x2751) |
 | 16 | u16 | position des pixels | 1152 (8 bits) ou 128 (4 bits) |
 | 18 | u16 | position de la palette | 128 (8 bits) ou 64 (4 bits) |
 | 20, 22 | u16, u16 | largeur, hauteur | |

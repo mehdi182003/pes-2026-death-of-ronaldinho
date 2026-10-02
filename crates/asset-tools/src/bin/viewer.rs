@@ -38,7 +38,7 @@ use clap::Parser;
 )]
 struct Args {
     /// Modèle de models/gta3.img, par exemple player ou colt45.
-    #[arg(required_unless_present_any = ["textures", "pes"])]
+    #[arg(required_unless_present_any = ["textures", "pes", "pes_scenery"])]
     model: Option<String>,
 
     /// Corps de joueur de PES 6, <archive>:<numéro>[/<sous-fichier>] (par
@@ -65,6 +65,11 @@ struct Args {
     /// (par exemple 0_text:1943).
     #[arg(long, requires = "pes")]
     pes_head: Option<PesFile>,
+
+    /// Décor de PES 6 (stade) : tous les modèles d'un fichier avec ses
+    /// textures, par exemple 0_text:6949.
+    #[arg(long, conflicts_with_all = ["textures", "pes", "model"])]
+    pes_scenery: Option<PesFile>,
 
     /// Dictionnaire de textures du modèle (par défaut : celui du même nom).
     #[arg(long)]
@@ -94,6 +99,26 @@ struct Args {
     /// face, 180 : de dos).
     #[arg(long, default_value_t = 34.0)]
     yaw: f32,
+
+    /// Distance de départ de la caméra, en fraction du cadrage complet
+    /// (0.2 : cinq fois plus près).
+    #[arg(long, default_value_t = 1.0)]
+    zoom: f32,
+
+    /// Point visé au départ, x,y,z en mètres (par défaut : le centre).
+    #[arg(long, value_parser = parse_point)]
+    look_at: Option<Vec3>,
+}
+
+fn parse_point(text: &str) -> Result<Vec3, String> {
+    let values: Vec<f32> = text
+        .split(',')
+        .map(|v| v.trim().parse::<f32>().map_err(|e| e.to_string()))
+        .collect::<Result<_, _>>()?;
+    match values[..] {
+        [x, y, z] => Ok(Vec3::new(x, y, z)),
+        _ => Err("attendu x,y,z".into()),
+    }
 }
 
 fn main() -> AppExit {
@@ -131,7 +156,7 @@ fn main() -> AppExit {
             path: args.capture.clone(),
             frame: 0,
         })
-        .insert_resource(StartYaw(args.yaw.to_radians()))
+        .insert_resource(StartYaw(args.yaw.to_radians(), args.zoom, args.look_at))
         .insert_resource(Options {
             skeleton: true,
             mesh: true,
@@ -158,6 +183,17 @@ fn load(args: &Args) -> Result<ViewerScene> {
         return Ok(ViewerScene::new(board, textures, true, None, None));
     }
 
+    if let Some(file) = &args.pes_scenery {
+        let pes6 = config::read_paths(&config_file)?.check(Game::Pes6)?;
+        let (mut model, textures) = Pes6::open(&pes6)?.load_scenery(file)?;
+        place(
+            &mut model,
+            Mat4::from_quat(Quat::from_array(retarget::PES6_STADIUM_TO_Y_UP))
+                * Mat4::from_scale(Vec3::splat(1.0 / retarget::PES6_STADIUM_UNITS_PER_METRE)),
+        );
+        // A stadium has its lighting baked in its vertex colours.
+        return Ok(ViewerScene::new(model, textures, true, None, None));
+    }
     let pes_scene = match &args.pes {
         Some(body) => Some(load_pes(
             &config_file,
@@ -417,6 +453,8 @@ fn texture_board(name: &str, textures: &[Texture]) -> Model {
                     material: neutral::Material {
                         base_color: [1.0; 4],
                         texture: Some(texture.name.clone()),
+                        blend: false,
+                        layer: 0,
                     },
                     indices: vec![0, 1, 2, 0, 2, 3],
                 }],
@@ -556,7 +594,18 @@ struct ModelRoot;
 /// drawn so far.
 /// `--yaw`, in radians.
 #[derive(Resource)]
-struct StartYaw(f32);
+struct StartYaw(f32, f32, Option<Vec3>);
+
+impl StartYaw {
+    fn framing(&self, min: Vec3, max: Vec3) -> Orbit {
+        let mut orbit = Orbit::framing(min, max, self.0);
+        orbit.distance *= self.1;
+        if let Some(target) = self.2 {
+            orbit.target = target;
+        }
+        orbit
+    }
+}
 
 #[derive(Resource)]
 struct Capture {
@@ -640,7 +689,7 @@ fn setup(
     }
 
     let (min, max) = scene.displayed_bounds(&root_transform);
-    let orbit = Orbit::framing(min, max, start_yaw.0);
+    let orbit = start_yaw.framing(min, max);
     commands.spawn((Camera3d::default(), orbit.transform(), orbit));
     commands.spawn((
         DirectionalLight {
@@ -709,7 +758,7 @@ fn handle_keys(
     if turn || keys.just_pressed(KeyCode::KeyF) {
         let (min, max) = scene.displayed_bounds(&options.root_transform());
         for mut orbit in &mut cameras {
-            *orbit = Orbit::framing(min, max, start_yaw.0);
+            *orbit = start_yaw.framing(min, max);
         }
     }
 }

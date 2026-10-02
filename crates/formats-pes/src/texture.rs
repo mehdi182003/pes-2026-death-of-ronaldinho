@@ -47,6 +47,9 @@ pub struct TextureHeader {
     /// Size given by the header: the file's size, give or take the padding
     /// of sub-files.
     pub file_size: usize,
+    /// Number by which models name the texture (offset 12), see
+    /// `model::PesModel::texture_ids`.
+    pub id: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -119,6 +122,7 @@ impl TextureHeader {
             palette_offset: usize::from(u16_at(18)),
             pixel_offset: usize::from(u16_at(16)),
             file_size: u32::from_le_bytes(header[8..12].try_into().unwrap()) as usize,
+            id: u32::from_le_bytes(header[12..16].try_into().unwrap()),
         })
     }
 }
@@ -126,6 +130,8 @@ impl TextureHeader {
 /// A decoded texture: 4 bytes per pixel (R, G, B, A), rows from the top.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DecodedTexture {
+    /// See [`TextureHeader::id`].
+    pub id: u32,
     pub width: u32,
     pub height: u32,
     pub rgba8: Vec<u8>,
@@ -200,6 +206,7 @@ pub fn decode(bytes: &[u8]) -> Result<DecodedTexture, TextureError> {
         rgba8.extend_from_slice(&palette[usize::from(entry)]);
     }
     Ok(DecodedTexture {
+        id: header.id,
         width: u32::from(header.width),
         height: u32::from(header.height),
         rgba8,
