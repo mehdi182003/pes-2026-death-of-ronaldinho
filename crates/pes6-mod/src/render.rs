@@ -81,6 +81,12 @@ const D3DTA_DIFFUSE: u32 = 0;
 
 const PAGE_READWRITE: u32 = 0x04;
 
+// HYPOTHÈSE: a camera drawing fewer primitives is a menu or the title
+// screen, not the stadium. Measured in the M2b log: title screen 8 to 10,
+// menus up to 519, match 12 000 and more. Replaced by the real match state
+// once it is read from memory (M3).
+const MIN_SCENE_PRIMITIVES: u64 = 5_000;
+
 /// How often the camera and frame rate are written to the log.
 const LOG_EVERY_SECONDS: u64 = 10;
 
@@ -599,7 +605,7 @@ unsafe fn draw_mod(device: Com, camera: Option<&Camera>, banner: &[Vertex]) {
             set_tss(device, 1, D3DTSS_ALPHAOP, D3DTOP_DISABLE);
             set_pixel_shader(device, 0);
 
-            if let Some(camera) = camera {
+            if let Some(camera) = camera.filter(|c| c.primitives >= MIN_SCENE_PRIMITIVES) {
                 let world: Vec<WorldVertex> = marker::marker([0.0; 3]);
                 set_transform(device, D3DTS_WORLD, &scene::IDENTITY);
                 set_transform(device, D3DTS_VIEW, &camera.view);
