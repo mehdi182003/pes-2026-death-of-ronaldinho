@@ -309,6 +309,17 @@ Mehdi veut la jouabilité réelle de PES, pas une réécriture. Décision : **mo
 
 **Déroulement voulu (Mehdi, 3 octobre 2026) :** le match commence normalement, le joueur contrôle son équipe et Tommy attend hors du terrain, sur la ligne de touche. Une touche fait passer le joueur sur Tommy : les deux équipes sont alors jouées par l'ordinateur (comme un match ordinateur contre ordinateur de PES), et le joueur peut tirer sur tous les joueurs ; un joueur touché tombe et sort du match. La même touche rend l'équipe au joueur.
 
+### Route « tout en Rust depuis le code décompilé » (décision de Mehdi, 3 octobre 2026)
+
+Mehdi veut finalement **tout dans le moteur Rust** (crate `game`), porté depuis le code décompilé des deux jeux, plutôt qu'un mod du vrai PES. Le mod `pes6-mod` reste, comme **instrument de mesure** : il enregistre ce que fait le vrai PES image par image, et chaque sous-système porté en Rust doit reproduire ces enregistrements. Une partie du code de PES saute dans les sections de SecuROM : on ne contourne pas cette protection, ces parties sont reproduites d'après les enregistrements.
+
+| Jalon | Livrable | Critère de réussite |
+| --- | --- | --- |
+| R1 | Carte des deux exécutables | Toutes les fonctions de PES6.exe et de gta-vc.exe décompilées et exportées hors du dépôt ; sous-systèmes repérés (physique du ballon, déplacement des joueurs, IA, règles, commandes, animations), consignés dans `docs/pes6-code.md` et `docs/vc-code.md`. |
+| R2 | Enregistreur | Le mod enregistre un match réel image par image (ballon, 23 joueurs, commandes) dans un fichier. |
+| R3 | Physique du ballon de PES en Rust | Portée du code décompilé ; rejouée sur les enregistrements, la trajectoire du ballon Rust suit celle du vrai. |
+| R4+ | Joueurs, animations PES, IA, règles, puis Tommy (code de Vice City) | Chaque sous-système validé contre les enregistrements, puis par Mehdi à la manette. |
+
 ### Vision longue (Mehdi, 3 octobre 2026), après la route « mod du vrai PES 6 »
 
 - **Le stade PES dans Vice City :** le stade de PES est ajouté à la carte de Vice City comme une extension. Tommy y entre, le menu « Match rapide » de PES s'ouvre (choix des équipes, etc., le déroulement normal de PES), puis le match avec Tommy (route ci-dessus).
