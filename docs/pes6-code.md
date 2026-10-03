@@ -39,7 +39,11 @@ Une partie du code saute dans les sections de SecuROM (`.rld`, adresses `0x044xx
 | --- | --- | --- |
 | `0x005A2A7B` | Calcul d'une passe (choix du receveur, puissance) | Lit les positions et vitesses des joueurs, la position visée du ballon |
 | `0x00478020` | Donne le ballon à un joueur (dernier toucher) | Copie identifiant et position du joueur ; écrit `+0x50`, `+0x58` du ballon |
+| `0x004AF220` | Placement du ballon pour les coups de pied arrêtés (croix directionnelle par pas de 0x40) | Pose le ballon au repos à `+0x24 = 0xC1E00000` (−28,0) ; `+0x10`/`+0x18` : position visée |
+| `0x0098A4E0` | Candidat : ajoute `_DAT_00b7d6bc` (+1,0) à `+0x30` d'une structure | À lire : gravité du ballon ? |
 | `0x004A3020` | Lancement du ballon depuis une structure de frappe | Boucle « vitesse += accélération » amortie par `0x00B8B874[type]` ; écrit `+0x30`, `+0x50`, `+0x58` |
+
+Export complet : 34 578 fonctions (19 échecs de décompilation), 40 Mo. Vice City : 4 848 fonctions dans `~/vc-decomp/export`.
 
 ## À faire (R3)
 
