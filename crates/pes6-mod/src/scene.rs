@@ -166,6 +166,22 @@ impl FrameCameras {
         object.draws += 1;
     }
 
+    /// The camera set right now, with the primitives drawn through it so far
+    /// in this frame.
+    pub fn current(&self) -> Option<Camera> {
+        let (view, projection) = (self.view?, self.projection?);
+        let primitives = self
+            .cameras
+            .iter()
+            .find(|c| c.view == view && c.projection == projection)
+            .map_or(0, |c| c.primitives);
+        Some(Camera {
+            view,
+            projection,
+            primitives,
+        })
+    }
+
     /// Ends the frame. The current matrices stay set, as on the device.
     pub fn finish(&mut self) -> FrameSummary {
         let cameras = self.cameras.len();
@@ -314,6 +330,21 @@ mod tests {
         frame.set_view(PES_VIEW);
         frame.draw(10);
         assert_eq!(frame.finish().logic_world(), None);
+    }
+
+    #[test]
+    fn current_camera_counts_its_primitives_so_far() {
+        let mut frame = FrameCameras::default();
+        assert_eq!(frame.current(), None);
+        frame.set_projection(PES_PROJECTION);
+        frame.set_view(PES_VIEW);
+        assert_eq!(frame.current().unwrap().primitives, 0);
+        frame.draw(700);
+        frame.set_view(IDENTITY);
+        frame.draw(5);
+        frame.set_view(PES_VIEW);
+        let current = frame.current().unwrap();
+        assert_eq!((current.view, current.primitives), (PES_VIEW, 700));
     }
 
     #[test]

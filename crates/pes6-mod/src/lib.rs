@@ -31,6 +31,7 @@ pub fn log_path(game_exe: &Path) -> PathBuf {
         .join(LOG_FILE_NAME)
 }
 
+pub mod bmp;
 pub mod install;
 pub mod marker;
 pub mod overlay;
@@ -38,6 +39,7 @@ pub mod pe;
 pub mod pes;
 pub mod scene;
 pub mod tommy;
+pub mod trace;
 
 #[cfg(all(windows, target_arch = "x86"))]
 mod assets;
