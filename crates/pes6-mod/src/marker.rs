@@ -93,6 +93,34 @@ pub fn marker(centre: [f32; 3]) -> Vec<WorldVertex> {
     out
 }
 
+/// Ball pin, +Y side.
+pub const PIN_PLUS_Y_COLOR: u32 = 0xff_20_e0_40;
+/// Ball pin, −Y side.
+pub const PIN_MINUS_Y_COLOR: u32 = 0xff_e0_20_e0;
+
+/// A thin pin through `at`, 1.5 m on each side of it along Y (green +Y,
+/// magenta −Y): shows whether a position read from memory matches the
+/// rendered world, and which way its Y goes.
+pub fn pin(at: [f32; 3]) -> Vec<WorldVertex> {
+    let m = UNITS_PER_METRE;
+    let (h, len) = (0.08 * m, 1.5 * m);
+    let [x, y, z] = at;
+    let mut out = Vec::new();
+    cuboid(
+        &mut out,
+        [x - h, y, z - h],
+        [x + h, y + len, z + h],
+        PIN_PLUS_Y_COLOR,
+    );
+    cuboid(
+        &mut out,
+        [x - h, y - len, z - h],
+        [x + h, y, z + h],
+        PIN_MINUS_Y_COLOR,
+    );
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -107,6 +135,17 @@ mod tests {
         let m = marker([0.0; 3]);
         assert_eq!(m.len(), 4 * 6 * 6);
         assert_eq!(m.len() % 3, 0);
+    }
+
+    #[test]
+    fn pin_goes_through_its_point() {
+        let p = pin([100.0, 20.0, -50.0]);
+        assert_eq!(p.len(), 2 * 6 * 6);
+        assert!(
+            p.iter()
+                .all(|v| (v.x - 100.0).abs() < 5.0 && (v.z + 50.0).abs() < 5.0)
+        );
+        assert!(p.iter().any(|v| v.y > 90.0) && p.iter().any(|v| v.y < -50.0));
     }
 
     #[test]

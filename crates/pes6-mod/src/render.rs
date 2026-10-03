@@ -14,6 +14,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering::Relaxed};
 use std::time::Instant;
 
+use crate::game;
 use crate::marker::{self, WorldVertex};
 use crate::overlay::{self, Vertex};
 use crate::pe::{self, Image};
@@ -458,7 +459,7 @@ struct LogClock {
 static LOG_CLOCK: Mutex<Option<LogClock>> = Mutex::new(None);
 
 /// Objects listed per log entry (the biggest ones).
-const LOGGED_OBJECTS: usize = 40;
+const LOGGED_OBJECTS: usize = 8;
 
 fn log_frame(frame: u64, summary: &FrameSummary) {
     let Ok(mut clock) = LOG_CLOCK.lock() else {
@@ -491,6 +492,10 @@ fn log_frame(frame: u64, summary: &FrameSummary) {
     log(&format!("  PROJECTION {:?}", c.projection));
     if c.primitives < MIN_SCENE_PRIMITIVES {
         return;
+    }
+    log(&format!("  ballon : {:?}", game::ball_position()));
+    if let Some(players) = game::player_positions() {
+        log(&format!("  joueurs : {players:?}"));
     }
     let identity = summary
         .objects
@@ -632,7 +637,11 @@ unsafe fn draw_mod(device: Com, camera: Option<&Camera>, banner: &[Vertex]) {
             set_pixel_shader(device, 0);
 
             if let Some(camera) = camera.filter(|c| c.primitives >= MIN_SCENE_PRIMITIVES) {
-                let world: Vec<WorldVertex> = marker::marker([0.0; 3]);
+                game::on_match_frame();
+                let mut world: Vec<WorldVertex> = marker::marker([0.0; 3]);
+                if let Some(ball) = game::ball_position() {
+                    world.extend(marker::pin(ball));
+                }
                 set_transform(device, D3DTS_WORLD, &scene::IDENTITY);
                 set_transform(device, D3DTS_VIEW, &camera.view);
                 set_transform(device, D3DTS_PROJECTION, &camera.projection);

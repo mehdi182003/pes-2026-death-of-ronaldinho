@@ -35,8 +35,13 @@ pub mod install;
 pub mod marker;
 pub mod overlay;
 pub mod pe;
+pub mod pes;
 pub mod scene;
 
+#[cfg(all(windows, target_arch = "x86"))]
+mod game;
+#[cfg(all(windows, target_arch = "x86"))]
+mod memory;
 #[cfg(all(windows, target_arch = "x86"))]
 mod proxy;
 #[cfg(all(windows, target_arch = "x86"))]
