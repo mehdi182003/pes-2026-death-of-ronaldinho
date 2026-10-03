@@ -20,6 +20,13 @@ pub const BALL_POSITION: usize = 0x20;
 pub const PLAYERS_RVA: usize = 0x03BD_C980 - IMAGE_BASE;
 pub const PLAYER_STRIDE: usize = 0x240;
 pub const PLAYER_SLOTS: usize = 0x17;
+/// Slot of the referee. Seen in the M3 log: slot 0 stays near the ball all
+/// match while slots 1 and 12 stay in front of each goal (the goalkeepers,
+/// number 0 of teams 0 and 1); slots 1–11 are team 0 and 12–22 team 1. The
+/// referee's team byte is 0, unused.
+pub const REFEREE_SLOT: usize = 0;
+/// Position of every slot before kick-off (outside the pitch).
+pub const OFF_PITCH: [f32; 3] = [32767.0, 0.0, 8729.0];
 /// Player struct: identifier byte (`*param_1` in FUN_00478020).
 pub const PLAYER_ID: usize = 0x00;
 /// Player struct: number within the team, indexes the stats table
@@ -68,7 +75,27 @@ pub struct Player {
     pub position: [f32; 3],
 }
 
+/// Who stands in a slot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Role {
+    Referee,
+    Team(u8),
+}
+
 impl Player {
+    pub fn role(&self) -> Role {
+        if self.slot == REFEREE_SLOT {
+            Role::Referee
+        } else {
+            Role::Team(self.team)
+        }
+    }
+
+    /// On the pitch right now (not before kick-off, not garbage).
+    pub fn on_pitch(&self) -> bool {
+        self.position != OFF_PITCH && plausible_position(self.position)
+    }
+
     /// Reads the first [`PLAYER_READ_LEN`] bytes of slot `slot`.
     pub fn parse(slot: usize, bytes: &[u8]) -> Option<Self> {
         let bytes = bytes.get(..PLAYER_READ_LEN)?;
@@ -118,6 +145,23 @@ mod tests {
         assert_eq!((p.slot, p.id, p.number, p.team), (3, 7, 9, 1));
         assert_eq!(p.position, [1200.0, 0.0, -800.0]);
         assert!(Player::parse(3, &bytes[..10]).is_none());
+    }
+
+    #[test]
+    fn slot_zero_is_the_referee() {
+        let bytes = vec![0u8; PLAYER_READ_LEN];
+        assert_eq!(Player::parse(0, &bytes).unwrap().role(), Role::Referee);
+        assert_eq!(Player::parse(1, &bytes).unwrap().role(), Role::Team(0));
+    }
+
+    #[test]
+    fn nobody_is_on_the_pitch_before_kick_off() {
+        let mut bytes = vec![0u8; PLAYER_READ_LEN];
+        for (i, v) in OFF_PITCH.iter().enumerate() {
+            bytes[PLAYER_POSITION + 4 * i..PLAYER_POSITION + 4 * i + 4]
+                .copy_from_slice(&v.to_le_bytes());
+        }
+        assert!(!Player::parse(5, &bytes).unwrap().on_pitch());
     }
 
     #[test]

@@ -121,11 +121,11 @@ pub fn pin(at: [f32; 3], units_per_metre: f32) -> Vec<WorldVertex> {
     out
 }
 
-/// Player flag colours: team 0 cyan, team 1 orange, anything else white.
-pub fn team_color(team: u8) -> u32 {
-    match team {
-        0 => 0xff_20_e0_e0,
-        1 => 0xff_ff_90_20,
+/// Flag colours: team 0 cyan, team 1 orange, referee (and anything else) white.
+pub fn role_color(role: crate::pes::Role) -> u32 {
+    match role {
+        crate::pes::Role::Team(0) => 0xff_20_e0_e0,
+        crate::pes::Role::Team(1) => 0xff_ff_90_20,
         _ => 0xff_ff_ff_ff,
     }
 }
@@ -176,7 +176,11 @@ mod tests {
 
     #[test]
     fn flag_floats_above_the_player() {
-        let f = flag([0.0, 0.0, 0.0], 100.0, team_color(0));
+        let f = flag(
+            [0.0, 0.0, 0.0],
+            100.0,
+            role_color(crate::pes::Role::Team(0)),
+        );
         assert_eq!(f.len(), 36);
         // Y down: above means negative Y, between 2 m and 3 m.
         assert!(f.iter().all(|v| (-300.0..=-200.0).contains(&v.y)));

@@ -669,11 +669,11 @@ unsafe fn draw_mod(
                         .map(|ball| marker::pin(ball, pes::LOGIC_UNITS_PER_METRE))
                         .unwrap_or_default();
                     for player in game::players() {
-                        if pes::plausible_position(player.position) && player.position != [0.0; 3] {
+                        if player.on_pitch() {
                             pins.extend(marker::flag(
                                 player.position,
                                 pes::LOGIC_UNITS_PER_METRE,
-                                marker::team_color(player.team),
+                                marker::role_color(player.role()),
                             ));
                         }
                     }
