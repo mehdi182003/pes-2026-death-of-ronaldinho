@@ -301,8 +301,13 @@ Mehdi veut la jouabilité réelle de PES, pas une réécriture. Décision : **mo
 | M2a | Accroche Direct3D 8 (`Direct3DCreate8` → `CreateDevice` → `Present`) | Un bandeau « CHAOS FC » s'affiche en haut à gauche, par-dessus les menus et le match, sans gêner le jeu ; le journal indique comment PES envoie ses matrices. **Validé le 3 octobre 2026 par Mehdi** (bandeau visible dans les menus et en match, jeu normal). |
 | M2b | Objet dans le monde | Un objet de test dessiné dans le vrai match, à un point fixe du terrain. **Validé le 3 octobre 2026 par Mehdi** (repère au point central, caché par les joueurs, absent des menus ; poteau bleu vers le ciel : monde Y vers le bas). |
 | M3 | Ballon et joueurs en mémoire (Ghidra + lecture depuis le mod) | Positions du ballon et des 22 joueurs journalisées, cohérentes avec l'écran. Étapes : (1) relever les matrices WORLD de chaque objet dessiné en match ; (2) chercher ces valeurs dans la mémoire de PES depuis le mod ; (3) confirmer la structure d'un joueur avec Ghidra. **Ballon validé le 3 octobre 2026 par Mehdi** (épingle sur le ballon). Joueurs : tableau de 23 × 0x240 octets à `0x03BDC980`, lu dans le code décompilé (emplacement 0 l'arbitre, 1–11 équipe 0, 12–22 équipe 1 ; voir `docs/pes6-mod.md`). **Validé le 3 octobre 2026 par Mehdi** (un fanion sur chaque joueur, une couleur par équipe). |
-| M4 | Tommy dans le vrai match | Tommy (modèle de Vice City) dessiné sur la pelouse, contrôlé par le joueur, caméra de PES. |
+| M4a | Tommy au bord du terrain | Tommy (modèle et textures de Vice City) dessiné immobile hors du terrain, sur la ligne de touche, dans l'image de PES. |
+| M4b | Animations de Tommy | Tommy joue ses animations de Vice City (repos, course). |
+| M4c | Bascule vers Tommy | Une touche fait passer le joueur sur Tommy : les deux équipes passent sous le contrôle de l'ordinateur (code de PES décompilé), PES ne reçoit plus les commandes du joueur ; la même touche rend l'équipe. |
+| M4d | Intégration | Tommy caché par les joueurs qui passent devant, ombre, taille juste. |
 | M5 | Tirs | Armes de Vice City, sons d'origine ; un joueur touché tombe et sort du jeu. |
+
+**Déroulement voulu (Mehdi, 3 octobre 2026) :** le match commence normalement, le joueur contrôle son équipe et Tommy attend hors du terrain, sur la ligne de touche. Une touche fait passer le joueur sur Tommy : les deux équipes sont alors jouées par l'ordinateur (comme un match ordinateur contre ordinateur de PES), et le joueur peut tirer sur tous les joueurs ; un joueur touché tombe et sort du match. La même touche rend l'équipe au joueur.
 
 ### Vision longue (Mehdi, 3 octobre 2026), après la route « mod du vrai PES 6 »
 
