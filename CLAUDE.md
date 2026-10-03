@@ -4,12 +4,10 @@ Le brief de référence est [`docs/BRIEF.md`](docs/BRIEF.md). **Le relire avant 
 
 ## Règles non négociables (légal)
 
-1. **Aucun asset dans le dépôt.** Rien qui provienne de GTA Vice City ou de PES (modèles, textures, animations, sons, fichiers extraits, dumps) ne doit être commité. Le `.gitignore` bloque les extensions concernées et la CI échoue si l'une d'elles est suivie par Git.
+1. **Aucun asset dans le dépôt.** Rien qui provienne de GTA Vice City ou de PES (modèles, textures, animations, sons, fichiers extraits, dumps, sorties de décompilation) ne doit être commité. Le `.gitignore` bloque les extensions concernées et la CI échoue si l'une d'elles est suivie par Git.
 2. **Chemins configurables.** Les jeux sont lus depuis les installations du joueur, déclarées dans `config.toml` (non versionné ; modèle : `config.example.toml`). Sans chemins valides, le jeu refuse de démarrer avec un message clair.
-3. **Pas de code d'origine.** Interdiction d'utiliser ou de s'inspirer ligne à ligne de reVC, re3, ou du code source de GTA V qui a fuité.
-4. **Pas de décompilation des exécutables.** Le comportement des jeux est reproduit par observation. La documentation publique des formats est autorisée.
-5. **Références open source autorisées** pour comprendre les formats (wiki GTAMods, librw, OpenRW, outils de modding PES), en respectant leurs licences.
-6. **Tests sans assets commités.** Les tests qui lisent de vrais fichiers sont ignorés automatiquement si les chemins des jeux ne sont pas configurés.
+3. **Références open source autorisées** pour comprendre les formats (wiki GTAMods, librw, OpenRW, outils de modding PES), en respectant leurs licences.
+4. **Tests sans assets commités.** Les tests qui lisent de vrais fichiers sont ignorés automatiquement si les chemins des jeux ne sont pas configurés.
 
 ## Conventions de travail
 

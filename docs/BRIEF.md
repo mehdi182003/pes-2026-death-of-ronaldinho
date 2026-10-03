@@ -14,12 +14,12 @@ Ce document est le brief de référence. Claude Code le relit avant chaque jalon
 
 Aucun fichier issu de GTA Vice City ou de PES ne doit jamais entrer dans le dépôt Git. Le jeu lit tout depuis les installations du joueur.
 
-1. **Aucun asset dans le dépôt.** Modèles, textures, animations, sons et fichiers extraits restent hors du repo. Le dossier de cache d'extraction est dans le `.gitignore` dès le premier commit.
+1. **Aucun asset dans le dépôt.** Modèles, textures, animations, sons, fichiers extraits et sorties de décompilation restent hors du repo. Le dossier de cache d'extraction est dans le `.gitignore` dès le premier commit.
 2. **Chemins configurables.** Le joueur indique l'emplacement de ses copies de Vice City et de PES 6 dans un fichier de configuration (`config.toml`). Le jeu refuse de démarrer avec un message clair si un chemin manque.
-3. **Pas de code d'origine.** Interdiction d'utiliser ou de s'inspirer ligne à ligne de reVC, re3, ou du code source de GTA V qui a fuité. Ces projets ont fait l'objet de poursuites par Take-Two.
-4. **Pas de décompilation des exécutables pour copier du code.** Le comportement des jeux est reproduit par observation (vidéos, mesures en jeu). La documentation publique des formats de fichiers est autorisée.
-5. **Références open source autorisées** pour comprendre les formats : la documentation du wiki GTAMods, librw, OpenRW, les outils de la scène de modding PES. Respecter leurs licences si du code est repris.
-6. **Tests sans assets commités.** Les tests qui lisent de vrais fichiers sont ignorés automatiquement si les chemins des jeux ne sont pas configurés.
+3. **Références open source autorisées** pour comprendre les formats : la documentation du wiki GTAMods, librw, OpenRW, les outils de la scène de modding PES. Respecter leurs licences si du code est repris.
+4. **Tests sans assets commités.** Les tests qui lisent de vrais fichiers sont ignorés automatiquement si les chemins des jeux ne sont pas configurés.
+
+**Décision de Mehdi (3 octobre 2026) :** les anciennes règles « pas de code d'origine (reVC, re3, code de GTA V qui a fuité) » et « pas de décompilation des exécutables » sont supprimées, ainsi que l'interdiction de déchiffrer les fichiers chiffrés de PES. Objectif : retrouver la physique, les modèles et la jouabilité réelles des deux jeux par reverse engineering complet (skills universal-modder : `reverse-engineering`, `mashup-mods`). Cette décision s'applique au fork de Mehdi (`mehdi182003/pes-2026-death-of-ronaldinho`), pas au dépôt de Mokhmad (`MokhmadGUIRIEV/chaos-fc`). Risque connu : Take-Two a poursuivi les auteurs de re3 et reVC ; les sorties de décompilation restent hors du dépôt (règle 1).
 
 **Mise en œuvre (J0) :**
 
@@ -176,7 +176,7 @@ Références : le wiki GTAMods (pages RenderWare, DFF, TXD, IFP, IMG), librw et 
 - `formats-pes` lit les archives (`afs`), l'en-tête compressé (`packed`, avec flate2) et reconnaît les contenus (`content`) ; `asset-bridge::pes6` ouvre le dossier `dat` et porte la carte de `0_text.afs`. Les fichiers sont désignés par archive et numéro (`0_text:1943`), faute de noms.
 - Les contenus non reconnus sont listés avec leurs premiers octets, jamais devinés.
 - Les tests sur les fichiers de PES vérifient des propriétés (contenus des sections, fichiers illisibles cantonnés aux zones chiffrées), pas des nombres exacts.
-- **Les fichiers chiffrés ne sont pas déchiffrés.** C'est une protection du jeu ; la contourner pose une question juridique (mesures techniques de protection) qui dépasse les règles du projet. Chaos FC s'en passe, sauf décision contraire de Mokhmad et Mehdi, à consigner ici.
+- **Les fichiers chiffrés ne sont pas déchiffrés.** C'est une protection du jeu ; la contourner pose une question juridique (mesures techniques de protection) qui dépasse les règles du projet. Chaos FC s'en passe, sauf décision contraire de Mokhmad et Mehdi, à consigner ici. **Levée par Mehdi le 3 octobre 2026 sur son fork** (voir « Contraintes légales »).
 
 **Reste à faire (J4)** : validé avec réserves. À reprendre :
 
@@ -227,7 +227,7 @@ Chaque format suit le même cycle : hypothèse, parser, validation visuelle, doc
 5. **Valider visuellement** dans le visualiseur d'assets. Un modèle qui s'affiche correctement valide l'hypothèse. Un modèle déformé indique un champ mal lu.
 6. **Documenter le résultat** dans `docs/formats/<format>.md` : structure confirmée, champs encore inconnus, fichiers testés.
 
-Pour le comportement des jeux (vitesse de course, cadence de tir, rebonds du ballon), on procède par observation : vidéos de gameplay, mesures en jeu, puis réglage de constantes dans un fichier de tuning. Jamais de décompilation de l'exécutable.
+Pour le comportement des jeux (vitesse de course, cadence de tir, rebonds du ballon), on procède par observation : vidéos de gameplay, mesures en jeu, puis réglage de constantes dans un fichier de tuning. Depuis le 3 octobre 2026, la décompilation des exécutables est aussi permise (voir « Contraintes légales »).
 
 L'IA ne sait pas juger si un rendu ou un ressenti est correct. À chaque validation visuelle, Claude Code demande à Mokhmad de lancer le build et de confirmer ce qu'il voit, captures d'écran à l'appui.
 
