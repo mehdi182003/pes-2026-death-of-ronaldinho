@@ -54,6 +54,35 @@ pub struct FrameSummary {
     pub blend_matrices: u32,
 }
 
+impl Object {
+    /// Length of the first row: the scale of the X axis.
+    pub fn scale(&self) -> f32 {
+        let w = &self.world;
+        (w[0] * w[0] + w[1] * w[1] + w[2] * w[2]).sqrt()
+    }
+}
+
+// HYPOTHÈSE: PES draws its players and ball from "logic" coordinates (the
+// ones stored in memory, 256.5 units per metre) through one WORLD matrix of
+// scale 0.2 at the origin; the pitch and stadium are drawn with the identity.
+// Seen in the M3 logs: in match, exactly these two WORLD matrices; the ball
+// in memory × 0.2 lands where the camera looks.
+const LOGIC_SCALE_RANGE: std::ops::RangeInclusive<f32> = 0.1..=0.5;
+
+impl FrameSummary {
+    /// The WORLD matrix PES uses for objects in logic coordinates: the
+    /// biggest non-identity object of scale about 0.2 placed at the origin.
+    pub fn logic_world(&self) -> Option<Matrix> {
+        self.objects
+            .iter()
+            .filter(|o| o.world != IDENTITY)
+            .filter(|o| o.position().iter().all(|v| v.abs() < 1.0))
+            .filter(|o| LOGIC_SCALE_RANGE.contains(&o.scale()))
+            .max_by_key(|o| o.primitives)
+            .map(|o| o.world)
+    }
+}
+
 /// Bit pattern of a matrix, usable as a map key.
 fn key(m: &Matrix) -> [u32; 16] {
     m.map(f32::to_bits)
@@ -259,6 +288,32 @@ mod tests {
             (summary.objects[1].primitives, summary.objects[1].draws),
             (50, 2)
         );
+    }
+
+    #[test]
+    fn finds_the_logic_world_matrix() {
+        let mut logic = IDENTITY;
+        logic[0] = -0.2;
+        logic[5] = 0.2;
+        logic[10] = 0.2;
+        let mut frame = FrameCameras::default();
+        frame.set_projection(PES_PROJECTION);
+        frame.set_view(PES_VIEW);
+        frame.draw(10_000); // pitch, identity
+        frame.set_world(0, logic);
+        frame.draw(900);
+        frame.set_world(0, translation(2451.7, -395.3, -4236.9)); // replay object, elsewhere
+        frame.draw(984);
+        assert_eq!(frame.finish().logic_world(), Some(logic));
+    }
+
+    #[test]
+    fn no_logic_world_in_menus() {
+        let mut frame = FrameCameras::default();
+        frame.set_projection(PES_PROJECTION);
+        frame.set_view(PES_VIEW);
+        frame.draw(10);
+        assert_eq!(frame.finish().logic_world(), None);
     }
 
     #[test]

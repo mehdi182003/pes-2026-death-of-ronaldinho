@@ -24,12 +24,20 @@ pub const PLAYER_PROBE_LEN: usize = PLAYER_CELL + 2;
 /// Players on the pitch in a match.
 pub const PLAYERS: usize = 22;
 
-// HYPOTHÈSE: bounds of a position on or near the pitch, in PES units. The
-// marker of M2b shows the render world at ~51.3 units per metre (a 105 m ×
-// 68 m pitch is about 5400 × 3500 units); the logic positions are assumed to
-// use the same units, with a wide margin. To be confirmed with the ball post.
-pub const PITCH_HALF_EXTENT: f32 = 6_000.0;
-pub const MAX_HEIGHT: f32 = 2_000.0;
+/// Logic coordinates (ball and players in memory): 5 times the render
+/// world's 51.3 units per metre (M3 log: the ball at rest is at Y = −28,
+/// i.e. 11 cm above the grass, its radius). Y points down, like the render
+/// world.
+pub const LOGIC_UNITS_PER_METRE: f32 = 256.5;
+
+// HYPOTHÈSE: bounds of a logic position on or near the pitch: a 105 m × 68 m
+// pitch is about ±13 500 × ±8 700 units; the margin covers the run-off area.
+// The M3 log saw the ball up to 5 860 units from the centre line.
+pub const PITCH_HALF_EXTENT: f32 = 18_000.0;
+/// Highest ball, about 40 m.
+pub const MAX_HEIGHT: f32 = 10_000.0;
+/// Players stay within about 3 m of the ground (jumps, headers).
+pub const PLAYER_MAX_HEIGHT: f32 = 800.0;
 
 /// True when the three floats can be a position on or above the pitch.
 pub fn plausible_position([x, y, z]: [f32; 3]) -> bool {
@@ -64,7 +72,9 @@ pub fn looks_like_player(bytes: &[u8]) -> bool {
         return false;
     }
     let physics = u32_at(bytes, PLAYER_PHYSICS_PTR);
-    plausible_position(player_position(bytes))
+    let position = player_position(bytes);
+    plausible_position(position)
+        && position[1].abs() <= PLAYER_MAX_HEIGHT
         && (0x1_0000..0x8000_0000).contains(&physics)
         && physics.is_multiple_of(4)
 }

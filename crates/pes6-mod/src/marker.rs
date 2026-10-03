@@ -101,8 +101,8 @@ pub const PIN_MINUS_Y_COLOR: u32 = 0xff_e0_20_e0;
 /// A thin pin through `at`, 1.5 m on each side of it along Y (green +Y,
 /// magenta −Y): shows whether a position read from memory matches the
 /// rendered world, and which way its Y goes.
-pub fn pin(at: [f32; 3]) -> Vec<WorldVertex> {
-    let m = UNITS_PER_METRE;
+pub fn pin(at: [f32; 3], units_per_metre: f32) -> Vec<WorldVertex> {
+    let m = units_per_metre;
     let (h, len) = (0.08 * m, 1.5 * m);
     let [x, y, z] = at;
     let mut out = Vec::new();
@@ -139,7 +139,7 @@ mod tests {
 
     #[test]
     fn pin_goes_through_its_point() {
-        let p = pin([100.0, 20.0, -50.0]);
+        let p = pin([100.0, 20.0, -50.0], UNITS_PER_METRE);
         assert_eq!(p.len(), 2 * 6 * 6);
         assert!(
             p.iter()

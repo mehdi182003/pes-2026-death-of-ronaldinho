@@ -18,6 +18,7 @@ use crate::game;
 use crate::marker::{self, WorldVertex};
 use crate::overlay::{self, Vertex};
 use crate::pe::{self, Image};
+use crate::pes;
 use crate::proxy::log;
 use crate::scene::{self, Camera, FrameCameras, FrameSummary, Matrix};
 
@@ -450,6 +451,8 @@ unsafe extern "system" fn hooked_draw_indexed_primitive_up(
 // ---------------------------------------------------------------------------
 
 static FRAMES: AtomicU64 = AtomicU64::new(0);
+/// Last WORLD matrix seen for logic coordinates (see `FrameSummary::logic_world`).
+static LOGIC_WORLD: Mutex<Option<Matrix>> = Mutex::new(None);
 
 struct LogClock {
     last: Instant,
@@ -494,6 +497,10 @@ fn log_frame(frame: u64, summary: &FrameSummary) {
         return;
     }
     log(&format!("  ballon : {:?}", game::ball_position()));
+    log(&format!(
+        "  matrice des coordonnées logiques : {:?}",
+        summary.logic_world()
+    ));
     if let Some(players) = game::player_positions() {
         log(&format!("  joueurs : {players:?}"));
     }
@@ -537,9 +544,19 @@ unsafe extern "system" fn hooked_present(
     let summary = FRAME.lock().map(|mut f| f.finish()).unwrap_or_default();
     log_frame(frame, &summary);
     let camera = summary.main;
+    let logic_world = match summary.logic_world() {
+        Some(found) => {
+            if let Ok(mut last) = LOGIC_WORLD.lock() {
+                *last = Some(found);
+            }
+            Some(found)
+        }
+        // A frame without players (replay cut, close-up): keep the last one.
+        None => LOGIC_WORLD.lock().ok().and_then(|last| *last),
+    };
     MOD_DRAWING.store(true, Relaxed);
     // SAFETY: `this` is the game's live device, outside any scene.
-    unsafe { draw_mod(this, camera.as_ref(), &overlay::banner(frame)) };
+    unsafe { draw_mod(this, camera.as_ref(), logic_world, &overlay::banner(frame)) };
     MOD_DRAWING.store(false, Relaxed);
     type Present = unsafe extern "system" fn(
         Com,
@@ -561,7 +578,12 @@ unsafe extern "system" fn hooked_present(
 ///
 /// # Safety
 /// `device` must be a live IDirect3DDevice8, called outside BeginScene/EndScene.
-unsafe fn draw_mod(device: Com, camera: Option<&Camera>, banner: &[Vertex]) {
+unsafe fn draw_mod(
+    device: Com,
+    camera: Option<&Camera>,
+    logic_world: Option<Matrix>,
+    banner: &[Vertex],
+) {
     // SAFETY (whole block): every call goes through the device's own vtable
     // with the argument types of d3d8.h.
     unsafe {
@@ -638,10 +660,10 @@ unsafe fn draw_mod(device: Com, camera: Option<&Camera>, banner: &[Vertex]) {
 
             if let Some(camera) = camera.filter(|c| c.primitives >= MIN_SCENE_PRIMITIVES) {
                 game::on_match_frame();
-                let mut world: Vec<WorldVertex> = marker::marker([0.0; 3]);
-                if let Some(ball) = game::ball_position() {
-                    world.extend(marker::pin(ball));
-                }
+                let world: Vec<WorldVertex> = marker::marker([0.0; 3]);
+                let ball = game::ball_position()
+                    .zip(logic_world)
+                    .map(|(ball, _)| marker::pin(ball, pes::LOGIC_UNITS_PER_METRE));
                 set_transform(device, D3DTS_WORLD, &scene::IDENTITY);
                 set_transform(device, D3DTS_VIEW, &camera.view);
                 set_transform(device, D3DTS_PROJECTION, &camera.projection);
@@ -653,6 +675,16 @@ unsafe fn draw_mod(device: Com, camera: Option<&Camera>, banner: &[Vertex]) {
                     world.as_ptr().cast(),
                     std::mem::size_of::<WorldVertex>() as u32,
                 );
+                if let (Some(pin), Some(logic)) = (ball, logic_world) {
+                    set_transform(device, D3DTS_WORLD, &logic);
+                    draw_primitive_up(
+                        device,
+                        D3DPT_TRIANGLELIST,
+                        (pin.len() / 3) as u32,
+                        pin.as_ptr().cast(),
+                        std::mem::size_of::<WorldVertex>() as u32,
+                    );
+                }
             }
 
             // The banner is always on top.
