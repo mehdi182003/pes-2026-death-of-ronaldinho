@@ -25,4 +25,7 @@ L'installation refuse de remplacer un `dinput8.dll` qui ne vient pas de Chaos FC
 
 - **3 octobre 2026 (M1).** `um scan` : moteur inconnu, x86, aucun anti-triche. Sections de PES6.exe : code à `0x1000` (entropie 6,8, prologues de fonctions lisibles, point d'entrée `0x1a3ce` dans cette section), puis `.rdata`, `.data`, `.data1`, `.rsrc`, et les sections de SecuROM `age`, `agis`, `quod`, `.rld`. Chaînes `SecuROM`, `paul.dll`, `Direct3DCreate9`, `DirectInput8Create`.
 - Sur i686, une fonction `extern "system"` est exportée `_DirectInput8Create@20` : `dinput8.def` l'exporte sous son nom simple (vérifié avec `dumpbin /exports`).
-- **Prochaine étape :** Mehdi installe le mod et lance PES 6 (critère de M1). En parallèle : import de PES6.exe dans Ghidra.
+- **M1 validé** par Mehdi : match joué, commandes normales, journal complet.
+- **M2a.** PES6.exe importe `d3d8.dll`, pas `d3d9.dll` (table d'imports lue sur le fichier ; tables de noms séparées présentes pour chaque DLL). Le mod remplace l'emplacement de `Direct3DCreate8`, puis les entrées de vtable `IDirect3D8::CreateDevice` (15) et `IDirect3DDevice8::Present` (15), `Reset` (14), `BeginScene` (34), `SetTransform` (37), `CreateVertexShader` (75), `SetVertexShaderConstant` (79). Indices et constantes vérifiés dans `d3d8.h` et `d3d8types.h` de Wine (même disposition que les en-têtes de Microsoft). Le bandeau est dessiné dans `Present`, dans sa propre scène, avec sauvegarde et restauration de tout l'état (bloc d'état `D3DSBT_ALL`).
+- Ghidra : analyse complète de PES6.exe terminée (`~/pes6-decomp/PES6.gpr`).
+- **Prochaine étape :** Mehdi lance PES 6 avec le mod (critère de M2a) ; le journal dira si PES utilise `SetTransform` (pipeline fixe) ou des vertex shaders pour ses matrices, ce qui décide de M2b.

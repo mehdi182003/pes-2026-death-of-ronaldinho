@@ -139,6 +139,7 @@ pub unsafe extern "system" fn DllMain(module: Hmodule, reason: u32, _reserved: *
                     .map(|p| p.display().to_string())
                     .unwrap_or_default()
             ));
+            crate::render::install();
         }
         DLL_PROCESS_DETACH => log("déchargé"),
         _ => {}

@@ -32,9 +32,13 @@ pub fn log_path(game_exe: &Path) -> PathBuf {
 }
 
 pub mod install;
+pub mod overlay;
+pub mod pe;
 
 #[cfg(all(windows, target_arch = "x86"))]
 mod proxy;
+#[cfg(all(windows, target_arch = "x86"))]
+mod render;
 
 #[cfg(test)]
 mod tests {

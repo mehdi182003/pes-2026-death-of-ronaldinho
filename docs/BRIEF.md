@@ -289,12 +289,13 @@ On valide d'abord que les assets des deux jeux sont lisibles (J1 à J5), avant d
 
 Mehdi veut la jouabilité réelle de PES, pas une réécriture. Décision : **modder d'abord le vrai PES6.exe**, et garder le moteur Rust (J7 à J11) comme repli et comme source des parsers (Tommy, armes, sons de Vice City). Le mod est la crate `pes6-mod` : une DLL 32 bits nommée `dinput8.dll`, posée à côté de PES6.exe (qui importe `DINPUT8.dll`), qui transmet `DirectInput8Create` à la DLL du système. Plan et journal : `docs/pes6-mod.md`.
 
-**Constats (M1) :** PES6.exe (21,9 Mo, compilé le 9 septembre 2006) est natif x86, sans anti-triche, et protégé par SecuROM (sections renommées `age`, `agis`, `quod`, `.rld`). Sa section de code est lisible statiquement (Ghidra). On ne touche pas à SecuROM et on évite les débogueurs (contrôles anti-débogage) : analyse statique, puis lecture de la mémoire depuis le mod. Il importe `d3d9.dll` (`Direct3DCreate9`) et `DINPUT8.dll`.
+**Constats (M1) :** PES6.exe (21,9 Mo, compilé le 9 septembre 2006) est natif x86, sans anti-triche, et protégé par SecuROM (sections renommées `age`, `agis`, `quod`, `.rld`). Sa section de code est lisible statiquement (Ghidra). On ne touche pas à SecuROM et on évite les débogueurs (contrôles anti-débogage) : analyse statique, puis lecture de la mémoire depuis le mod. Il importe **`d3d8.dll`** (`Direct3DCreate8` : PES 6 est un jeu **Direct3D 8**) et `DINPUT8.dll`, appelés par des sauts `jmp [emplacement]` vers sa table d'imports (emplacements `0x77d3a8` et `0x77d01c`). Les chaînes `d3d9`/`Direct3DCreate9` sont dans les sections de SecuROM, pas dans les imports du jeu.
 
 | Jalon | Livrable | Critère de réussite |
 | --- | --- | --- |
 | M1 | Mod chargé dans PES6.exe (proxy `dinput8.dll`, `asset-tools mod install`/`uninstall`) | PES 6 se lance et se joue normalement ; `chaos-fc-mod.log` apparaît à côté de PES6.exe. **Validé le 3 octobre 2026 par Mehdi** (match joué, commandes normales ; journal : chargement, DirectInput 8 système, déchargement). |
-| M2 | Accroche Direct3D 9 | Un objet de test dessiné dans le vrai match, à un point fixe du terrain. |
+| M2a | Accroche Direct3D 8 (`Direct3DCreate8` → `CreateDevice` → `Present`) | Un bandeau « CHAOS FC » s'affiche en haut à gauche, par-dessus les menus et le match, sans gêner le jeu ; le journal indique comment PES envoie ses matrices. |
+| M2b | Objet dans le monde | Un objet de test dessiné dans le vrai match, à un point fixe du terrain. |
 | M3 | Ballon et joueurs en mémoire (Ghidra + lecture depuis le mod) | Positions du ballon et des 22 joueurs journalisées, cohérentes avec l'écran. |
 | M4 | Tommy dans le vrai match | Tommy (modèle de Vice City) dessiné sur la pelouse, contrôlé par le joueur, caméra de PES. |
 | M5 | Tirs | Armes de Vice City, sons d'origine ; un joueur touché tombe et sort du jeu. |

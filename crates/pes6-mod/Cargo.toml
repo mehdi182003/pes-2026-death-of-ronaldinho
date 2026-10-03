@@ -13,3 +13,4 @@ crate-type = ["cdylib", "rlib"]
 
 [dev-dependencies]
 tempfile.workspace = true
+asset-bridge.workspace = true
