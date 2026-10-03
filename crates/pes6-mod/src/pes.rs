@@ -18,6 +18,8 @@ pub const PLAYER_POSITION: usize = 0xE0;
 pub const PLAYER_PHYSICS_PTR: usize = 0xD0;
 /// Player struct: discrete cell of the pitch grid (X, then Y/Z), one byte each.
 pub const PLAYER_CELL: usize = 0x204;
+/// Player struct: "raw ball-distance value" (documented without its form).
+pub const PLAYER_BALL_DISTANCE: usize = 0x114;
 /// Bytes of a player struct read by [`looks_like_player`].
 pub const PLAYER_PROBE_LEN: usize = PLAYER_CELL + 2;
 
@@ -77,6 +79,63 @@ pub fn looks_like_player(bytes: &[u8]) -> bool {
         && position[1].abs() <= PLAYER_MAX_HEIGHT
         && (0x1_0000..0x8000_0000).contains(&physics)
         && physics.is_multiple_of(4)
+}
+
+/// How a stored ball distance relates to the two positions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum DistanceForm {
+    /// Distance in 3D.
+    Xyz,
+    /// Distance on the ground (X, Z).
+    Xz,
+    /// Squared distance in 3D.
+    XyzSquared,
+    /// Squared distance on the ground.
+    XzSquared,
+}
+
+impl DistanceForm {
+    pub const ALL: [Self; 4] = [Self::Xyz, Self::Xz, Self::XyzSquared, Self::XzSquared];
+
+    pub fn of(self, a: [f32; 3], b: [f32; 3]) -> f32 {
+        let [dx, dy, dz] = [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+        let xz = dx * dx + dz * dz;
+        match self {
+            Self::Xyz => (xz + dy * dy).sqrt(),
+            Self::Xz => xz.sqrt(),
+            Self::XyzSquared => xz + dy * dy,
+            Self::XzSquared => xz,
+        }
+    }
+}
+
+// HYPOTHÈSE: the ball moves between PES's last update of the stored
+// distance and our read of the ball: accept 5 % or half a metre.
+const DISTANCE_TOLERANCE: f32 = 0.05;
+const DISTANCE_SLACK: f32 = LOGIC_UNITS_PER_METRE / 2.0;
+
+/// Which form of distance to `ball` the struct stores at
+/// [`PLAYER_BALL_DISTANCE`], if any: the signature of a real player.
+pub fn ball_distance_form(bytes: &[u8], ball: [f32; 3]) -> Option<DistanceForm> {
+    if bytes.len() < PLAYER_PROBE_LEN {
+        return None;
+    }
+    let stored = f32_at(bytes, PLAYER_BALL_DISTANCE);
+    if !stored.is_finite() || stored <= 0.0 {
+        return None;
+    }
+    let position = player_position(bytes);
+    DistanceForm::ALL.into_iter().find(|form| {
+        let expected = form.of(position, ball);
+        let slack = match form {
+            DistanceForm::Xyz | DistanceForm::Xz => DISTANCE_SLACK,
+            // A slack of s on a distance d is about 2·d·s on its square.
+            DistanceForm::XyzSquared | DistanceForm::XzSquared => {
+                2.0 * expected.sqrt() * DISTANCE_SLACK
+            }
+        };
+        (stored - expected).abs() <= expected * DISTANCE_TOLERANCE + slack
+    })
 }
 
 /// Candidates found at a constant spacing: likely an array of structs.
@@ -164,6 +223,31 @@ mod tests {
         assert!(!looks_like_player(&player(100.0, 0.0, 0.0, 0)));
         assert!(!looks_like_player(&player(100.0, 0.0, 0.0, 0x0a00_1002)));
         assert!(!looks_like_player(&[0u8; 16]));
+    }
+
+    fn with_distance(mut bytes: Vec<u8>, distance: f32) -> Vec<u8> {
+        bytes[PLAYER_BALL_DISTANCE..PLAYER_BALL_DISTANCE + 4]
+            .copy_from_slice(&distance.to_le_bytes());
+        bytes
+    }
+
+    #[test]
+    fn recognises_the_form_of_the_ball_distance() {
+        let ball = [0.0, -28.0, 0.0];
+        let p = player(3000.0, 0.0, 4000.0, 0x0a00_1000);
+        assert_eq!(
+            ball_distance_form(&with_distance(p.clone(), 5000.0), ball),
+            Some(DistanceForm::Xyz)
+        );
+        assert_eq!(
+            ball_distance_form(&with_distance(p.clone(), 25_000_000.0), ball),
+            Some(DistanceForm::XyzSquared)
+        );
+        assert_eq!(
+            ball_distance_form(&with_distance(p.clone(), 1234.0), ball),
+            None
+        );
+        assert_eq!(ball_distance_form(&with_distance(p, 0.0), ball), None);
     }
 
     #[test]

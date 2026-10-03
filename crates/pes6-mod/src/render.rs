@@ -661,9 +661,15 @@ unsafe fn draw_mod(
             if let Some(camera) = camera.filter(|c| c.primitives >= MIN_SCENE_PRIMITIVES) {
                 game::on_match_frame();
                 let world: Vec<WorldVertex> = marker::marker([0.0; 3]);
-                let ball = game::ball_position()
-                    .zip(logic_world)
-                    .map(|(ball, _)| marker::pin(ball, pes::LOGIC_UNITS_PER_METRE));
+                let ball = logic_world.and_then(|_| {
+                    let mut pins = marker::pin(game::ball_position()?, pes::LOGIC_UNITS_PER_METRE);
+                    for player in game::player_positions().unwrap_or_default() {
+                        if pes::plausible_position(player) {
+                            pins.extend(marker::flag(player, pes::LOGIC_UNITS_PER_METRE));
+                        }
+                    }
+                    Some(pins)
+                });
                 set_transform(device, D3DTS_WORLD, &scene::IDENTITY);
                 set_transform(device, D3DTS_VIEW, &camera.view);
                 set_transform(device, D3DTS_PROJECTION, &camera.projection);
