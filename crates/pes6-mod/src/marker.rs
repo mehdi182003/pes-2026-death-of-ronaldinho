@@ -27,6 +27,11 @@ pub const MINUS_Y_COLOR: u32 = 0xff_20_60_ff;
 // cross, 3 m posts, 0.3 m thick. Wrong units only make it bigger or smaller.
 pub const UNITS_PER_METRE: f32 = 51.3;
 
+// HYPOTHÈSE: PES's world is Y down, like its stadium files: in the match
+// cameras of the M2b log, world +Y ends up at the bottom of the screen.
+// The cross is laid on the up side of the ground so the grass does not hide it.
+pub const UP_SIGN: f32 = -1.0;
+
 fn quad(out: &mut Vec<WorldVertex>, corners: [[f32; 3]; 4], color: u32) {
     let v = |[x, y, z]: [f32; 3]| WorldVertex { x, y, z, color };
     let [a, b, c, d] = corners;
@@ -56,18 +61,20 @@ pub fn marker(centre: [f32; 3]) -> Vec<WorldVertex> {
     let (arm, thick, post) = (5.0 * m, 0.3 * m, 3.0 * m);
     let [cx, cy, cz] = centre;
     let h = thick / 2.0;
+    // Top of the cross, a few centimetres above the grass.
+    let lift = cy + UP_SIGN * h / 2.0;
     let mut out = Vec::new();
     // Cross on the ground (X and Z arms), as flat boxes.
     cuboid(
         &mut out,
-        [cx - arm, cy - h / 4.0, cz - h],
-        [cx + arm, cy + h / 4.0, cz + h],
+        [cx - arm, cy.min(lift), cz - h],
+        [cx + arm, cy.max(lift), cz + h],
         CROSS_COLOR,
     );
     cuboid(
         &mut out,
-        [cx - h, cy - h / 4.0, cz - arm],
-        [cx + h, cy + h / 4.0, cz + arm],
+        [cx - h, cy.min(lift), cz - arm],
+        [cx + h, cy.max(lift), cz + arm],
         CROSS_COLOR,
     );
     // Posts.

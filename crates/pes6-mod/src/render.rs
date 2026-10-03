@@ -58,8 +58,10 @@ const D3DRS_ALPHATESTENABLE: u32 = 15;
 const D3DRS_SRCBLEND: u32 = 19;
 const D3DRS_DESTBLEND: u32 = 20;
 const D3DRS_CULLMODE: u32 = 22;
+const D3DRS_ZFUNC: u32 = 23;
 const D3DRS_ALPHABLENDENABLE: u32 = 27;
 const D3DRS_FOGENABLE: u32 = 28;
+const D3DRS_ZBIAS: u32 = 47;
 const D3DRS_STENCILENABLE: u32 = 52;
 const D3DRS_LIGHTING: u32 = 137;
 const D3DRS_COLORWRITEENABLE: u32 = 168;
@@ -67,6 +69,7 @@ const D3DFILL_SOLID: u32 = 3;
 const D3DBLEND_SRCALPHA: u32 = 5;
 const D3DBLEND_INVSRCALPHA: u32 = 6;
 const D3DCULL_NONE: u32 = 1;
+const D3DCMP_LESSEQUAL: u32 = 4;
 
 const D3DTSS_COLOROP: u32 = 1;
 const D3DTSS_COLORARG2: u32 = 3;
@@ -568,10 +571,13 @@ unsafe fn draw_mod(device: Com, camera: Option<&Camera>, banner: &[Vertex]) {
         if begin_scene(device) >= 0 {
             for (state, value) in [
                 (D3DRS_FILLMODE, D3DFILL_SOLID),
-                // HYPOTHÈSE: no depth test for the M2b marker, so it is
-                // always visible; occlusion by players comes with Tommy (M4).
-                (D3DRS_ZENABLE, 0),
-                (D3DRS_ZWRITEENABLE, 0),
+                // Depth test against PES's own depth buffer, still intact at
+                // Present (one scene per frame, the 2D HUD is pre-transformed):
+                // players in front of the marker hide it.
+                (D3DRS_ZENABLE, 1),
+                (D3DRS_ZFUNC, D3DCMP_LESSEQUAL),
+                (D3DRS_ZWRITEENABLE, 1),
+                (D3DRS_ZBIAS, 2),
                 (D3DRS_ALPHATESTENABLE, 0),
                 (D3DRS_ALPHABLENDENABLE, 1),
                 (D3DRS_SRCBLEND, D3DBLEND_SRCALPHA),
@@ -608,6 +614,9 @@ unsafe fn draw_mod(device: Com, camera: Option<&Camera>, banner: &[Vertex]) {
                 );
             }
 
+            // The banner is always on top.
+            set_render_state(device, D3DRS_ZENABLE, 0);
+            set_render_state(device, D3DRS_ZWRITEENABLE, 0);
             set_vertex_shader(device, overlay::FVF);
             draw_primitive_up(
                 device,
