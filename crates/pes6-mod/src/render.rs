@@ -936,6 +936,12 @@ unsafe extern "system" fn hooked_present(
     if summary
         .main
         .is_some_and(|c| c.primitives >= MIN_SCENE_PRIMITIVES)
+    {
+        game::record_frame(frame);
+    }
+    if summary
+        .main
+        .is_some_and(|c| c.primitives >= MIN_SCENE_PRIMITIVES)
         && MATCH_FRAMES.fetch_add(1, Relaxed) + 1 == TRACE_AT_MATCH_FRAME
     {
         TRACE_NEXT.store(true, Relaxed);

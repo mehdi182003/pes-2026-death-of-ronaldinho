@@ -37,6 +37,7 @@ pub mod marker;
 pub mod overlay;
 pub mod pe;
 pub mod pes;
+pub mod record;
 pub mod scene;
 pub mod tommy;
 pub mod trace;

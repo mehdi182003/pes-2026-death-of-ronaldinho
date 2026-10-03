@@ -36,6 +36,8 @@
 *.tex
 # Dumps et extractions bruts
 *.dump
+# Enregistrements de matchs réels par le mod (dérivés du jeu)
+*.cfrc
 
 # Éditeurs et OS
 .vscode/
