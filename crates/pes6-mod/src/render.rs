@@ -18,7 +18,7 @@ use crate::marker::{self, WorldVertex};
 use crate::overlay::{self, Vertex};
 use crate::pe::{self, Image};
 use crate::proxy::log;
-use crate::scene::{self, Camera, FrameCameras, Matrix};
+use crate::scene::{self, Camera, FrameCameras, FrameSummary, Matrix};
 
 type Hresult = i32;
 type Com = *mut c_void;
@@ -340,6 +340,7 @@ unsafe extern "system" fn hooked_set_transform(
         match state {
             D3DTS_VIEW => frame.set_view(m),
             D3DTS_PROJECTION => frame.set_projection(m),
+            D3DTS_WORLD.. => frame.set_world(state - D3DTS_WORLD, m),
             _ => {}
         }
     }
@@ -456,7 +457,10 @@ struct LogClock {
 
 static LOG_CLOCK: Mutex<Option<LogClock>> = Mutex::new(None);
 
-fn log_camera(frame: u64, camera: Option<&Camera>, cameras: usize) {
+/// Objects listed per log entry (the biggest ones).
+const LOGGED_OBJECTS: usize = 40;
+
+fn log_frame(frame: u64, summary: &FrameSummary) {
     let Ok(mut clock) = LOG_CLOCK.lock() else {
         return;
     };
@@ -472,19 +476,40 @@ fn log_camera(frame: u64, camera: Option<&Camera>, cameras: usize) {
     let fps = (frame - clock.frames_at_last) as f64 / elapsed;
     clock.last = now;
     clock.frames_at_last = frame;
-    match camera {
-        Some(c) => {
-            let origin = scene::project([0.0; 3], &c.view, &c.projection);
-            log(&format!(
-                "image {frame}, {fps:.1} images/s, {cameras} caméra(s) ; principale : {} primitives, origine à l'écran {origin:?}",
-                c.primitives
-            ));
-            log(&format!("  VIEW {:?}", c.view));
-            log(&format!("  PROJECTION {:?}", c.projection));
-        }
-        None => log(&format!(
+    let Some(c) = &summary.main else {
+        log(&format!(
             "image {frame}, {fps:.1} images/s, aucune caméra 3D"
-        )),
+        ));
+        return;
+    };
+    let origin = scene::project([0.0; 3], &c.view, &c.projection);
+    log(&format!(
+        "image {frame}, {fps:.1} images/s, {} caméra(s) ; principale : {} primitives, origine à l'écran {origin:?}",
+        summary.cameras, c.primitives
+    ));
+    log(&format!("  VIEW {:?}", c.view));
+    log(&format!("  PROJECTION {:?}", c.projection));
+    if c.primitives < MIN_SCENE_PRIMITIVES {
+        return;
+    }
+    let identity = summary
+        .objects
+        .iter()
+        .filter(|o| o.world == scene::IDENTITY)
+        .count();
+    log(&format!(
+        "  {} objets (matrices WORLD distinctes), dont {identity} à l'identité ; {} matrices de mélange",
+        summary.objects.len(),
+        summary.blend_matrices
+    ));
+    for object in summary.objects.iter().take(LOGGED_OBJECTS) {
+        let w = &object.world;
+        let scale = (w[0] * w[0] + w[1] * w[1] + w[2] * w[2]).sqrt();
+        let [x, y, z] = object.position();
+        log(&format!(
+            "    pos ({x:9.1}, {y:9.1}, {z:9.1}) échelle {scale:.3} : {} primitives, {} appels",
+            object.primitives, object.draws
+        ));
     }
 }
 
@@ -504,8 +529,9 @@ unsafe extern "system" fn hooked_present(
     dirty: *const c_void,
 ) -> Hresult {
     let frame = FRAMES.fetch_add(1, Relaxed) + 1;
-    let (camera, cameras) = FRAME.lock().map(|mut f| f.finish()).unwrap_or((None, 0));
-    log_camera(frame, camera.as_ref(), cameras);
+    let summary = FRAME.lock().map(|mut f| f.finish()).unwrap_or_default();
+    log_frame(frame, &summary);
+    let camera = summary.main;
     MOD_DRAWING.store(true, Relaxed);
     // SAFETY: `this` is the game's live device, outside any scene.
     unsafe { draw_mod(this, camera.as_ref(), &overlay::banner(frame)) };

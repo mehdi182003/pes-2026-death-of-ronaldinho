@@ -3,7 +3,10 @@
 //! PES 6 uses the fixed pipeline: it sets `D3DTS_VIEW` and `D3DTS_PROJECTION`
 //! with `SetTransform` (seen in the M2a log), but a frame can use several
 //! cameras (the pitch, then the score and radar in 2D). The camera that draws
-//! the most primitives is taken as the one of the pitch.
+//! the most primitives is taken as the one of the pitch. Within it, draws are
+//! grouped by WORLD matrix: one group per object placed in the world (M3).
+
+use std::collections::BTreeMap;
 
 pub type Matrix = [f32; 16];
 
@@ -22,12 +25,50 @@ pub struct Camera {
     pub primitives: u64,
 }
 
-/// Cameras of the frame being drawn.
+/// Everything drawn with one WORLD matrix through the main camera: one
+/// object placed in the world (or several sharing a placement).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Object {
+    pub world: Matrix,
+    pub primitives: u64,
+    pub draws: u32,
+}
+
+impl Object {
+    /// Translation of the WORLD matrix (row-vector convention: last row).
+    pub fn position(&self) -> [f32; 3] {
+        [self.world[12], self.world[13], self.world[14]]
+    }
+}
+
+/// What a frame drew.
+#[derive(Debug, Default, PartialEq)]
+pub struct FrameSummary {
+    /// The camera that drew the most primitives.
+    pub main: Option<Camera>,
+    /// Number of distinct cameras.
+    pub cameras: usize,
+    /// Objects drawn through the main camera, most primitives first.
+    pub objects: Vec<Object>,
+    /// `SetTransform` calls on `D3DTS_WORLDMATRIX(1..)`: vertex blending.
+    pub blend_matrices: u32,
+}
+
+/// Bit pattern of a matrix, usable as a map key.
+fn key(m: &Matrix) -> [u32; 16] {
+    m.map(f32::to_bits)
+}
+
+/// Cameras and objects of the frame being drawn.
 #[derive(Debug, Default)]
 pub struct FrameCameras {
     view: Option<Matrix>,
     projection: Option<Matrix>,
+    world: Matrix,
     cameras: Vec<Camera>,
+    /// (camera index, WORLD bits) → object.
+    objects: BTreeMap<(usize, [u32; 16]), Object>,
+    blend_matrices: u32,
 }
 
 impl FrameCameras {
@@ -35,7 +76,10 @@ impl FrameCameras {
         Self {
             view: None,
             projection: None,
+            world: IDENTITY,
             cameras: Vec::new(),
+            objects: BTreeMap::new(),
+            blend_matrices: 0,
         }
     }
 
@@ -47,35 +91,75 @@ impl FrameCameras {
         self.projection = Some(projection);
     }
 
-    /// Counts primitives drawn with the current camera. Draws made before
-    /// both matrices are known are ignored.
+    /// `D3DTS_WORLDMATRIX(index)`.
+    pub fn set_world(&mut self, index: u32, world: Matrix) {
+        if index == 0 {
+            self.world = world;
+        } else {
+            self.blend_matrices += 1;
+        }
+    }
+
+    /// Counts primitives drawn with the current camera and WORLD matrix.
+    /// Draws made before both camera matrices are known are ignored.
     pub fn draw(&mut self, primitives: u32) {
         let (Some(view), Some(projection)) = (self.view, self.projection) else {
             return;
         };
-        match self
+        let primitives = u64::from(primitives);
+        let index = match self
             .cameras
-            .iter_mut()
-            .find(|c| c.view == view && c.projection == projection)
+            .iter()
+            .position(|c| c.view == view && c.projection == projection)
         {
-            Some(camera) => camera.primitives += u64::from(primitives),
-            None => self.cameras.push(Camera {
-                view,
-                projection,
-                primitives: u64::from(primitives),
-            }),
-        }
+            Some(index) => {
+                self.cameras[index].primitives += primitives;
+                index
+            }
+            None => {
+                self.cameras.push(Camera {
+                    view,
+                    projection,
+                    primitives,
+                });
+                self.cameras.len() - 1
+            }
+        };
+        let object = self
+            .objects
+            .entry((index, key(&self.world)))
+            .or_insert(Object {
+                world: self.world,
+                primitives: 0,
+                draws: 0,
+            });
+        object.primitives += primitives;
+        object.draws += 1;
     }
 
-    /// Ends the frame: returns the camera that drew the most, and the number
-    /// of distinct cameras. The current matrices stay set, as on the device.
-    pub fn finish(&mut self) -> (Option<Camera>, usize) {
-        let count = self.cameras.len();
-        let main = self
+    /// Ends the frame. The current matrices stay set, as on the device.
+    pub fn finish(&mut self) -> FrameSummary {
+        let cameras = self.cameras.len();
+        let main_index = self
             .cameras
-            .drain(..)
-            .max_by_key(|camera| camera.primitives);
-        (main, count)
+            .iter()
+            .enumerate()
+            .max_by_key(|(_, c)| c.primitives)
+            .map(|(i, _)| i);
+        let main = main_index.map(|i| self.cameras[i]);
+        let mut objects: Vec<Object> = std::mem::take(&mut self.objects)
+            .into_iter()
+            .filter(|((camera, _), _)| Some(*camera) == main_index)
+            .map(|(_, object)| object)
+            .collect();
+        objects.sort_by_key(|o| std::cmp::Reverse(o.primitives));
+        self.cameras.clear();
+        FrameSummary {
+            main,
+            cameras,
+            objects,
+            blend_matrices: std::mem::take(&mut self.blend_matrices),
+        }
     }
 }
 
@@ -129,6 +213,12 @@ mod tests {
         -50.15674, 0.0,
     ];
 
+    fn translation(x: f32, y: f32, z: f32) -> Matrix {
+        let mut m = IDENTITY;
+        m[12..15].copy_from_slice(&[x, y, z]);
+        m
+    }
+
     #[test]
     fn the_busiest_camera_wins() {
         let mut frame = FrameCameras::default();
@@ -139,11 +229,36 @@ mod tests {
         frame.draw(300);
         frame.set_view(IDENTITY); // 2D overlay
         frame.draw(50);
-        let (main, count) = frame.finish();
-        assert_eq!(count, 2);
-        let main = main.unwrap();
+        let summary = frame.finish();
+        assert_eq!(summary.cameras, 2);
+        let main = summary.main.unwrap();
         assert_eq!(main.view, PES_VIEW);
         assert_eq!(main.primitives, 800);
+    }
+
+    #[test]
+    fn objects_are_grouped_by_world_matrix_of_the_main_camera() {
+        let mut frame = FrameCameras::default();
+        frame.set_projection(PES_PROJECTION);
+        frame.set_view(PES_VIEW);
+        frame.set_world(0, translation(1.0, 2.0, 3.0));
+        frame.draw(40);
+        frame.draw(10);
+        frame.set_world(0, translation(-5.0, 0.0, 9.0));
+        frame.draw(80);
+        frame.set_world(2, IDENTITY); // blend matrix
+        frame.set_view(IDENTITY); // another, smaller camera
+        frame.draw(5);
+        let summary = frame.finish();
+        assert_eq!(summary.blend_matrices, 1);
+        assert_eq!(summary.objects.len(), 2);
+        assert_eq!(summary.objects[0].position(), [-5.0, 0.0, 9.0]);
+        assert_eq!(summary.objects[0].primitives, 80);
+        assert_eq!(summary.objects[1].position(), [1.0, 2.0, 3.0]);
+        assert_eq!(
+            (summary.objects[1].primitives, summary.objects[1].draws),
+            (50, 2)
+        );
     }
 
     #[test]
@@ -153,9 +268,9 @@ mod tests {
         frame.set_projection(PES_PROJECTION);
         frame.draw(10);
         frame.finish();
-        assert_eq!(frame.finish(), (None, 0));
+        assert_eq!(frame.finish(), FrameSummary::default());
         frame.draw(5);
-        assert_eq!(frame.finish().0.unwrap().primitives, 5);
+        assert_eq!(frame.finish().main.unwrap().primitives, 5);
     }
 
     #[test]

@@ -298,7 +298,7 @@ Mehdi veut la jouabilité réelle de PES, pas une réécriture. Décision : **mo
 | M1 | Mod chargé dans PES6.exe (proxy `dinput8.dll`, `asset-tools mod install`/`uninstall`) | PES 6 se lance et se joue normalement ; `chaos-fc-mod.log` apparaît à côté de PES6.exe. **Validé le 3 octobre 2026 par Mehdi** (match joué, commandes normales ; journal : chargement, DirectInput 8 système, déchargement). |
 | M2a | Accroche Direct3D 8 (`Direct3DCreate8` → `CreateDevice` → `Present`) | Un bandeau « CHAOS FC » s'affiche en haut à gauche, par-dessus les menus et le match, sans gêner le jeu ; le journal indique comment PES envoie ses matrices. **Validé le 3 octobre 2026 par Mehdi** (bandeau visible dans les menus et en match, jeu normal). |
 | M2b | Objet dans le monde | Un objet de test dessiné dans le vrai match, à un point fixe du terrain. **Validé le 3 octobre 2026 par Mehdi** (repère au point central, caché par les joueurs, absent des menus ; poteau bleu vers le ciel : monde Y vers le bas). |
-| M3 | Ballon et joueurs en mémoire (Ghidra + lecture depuis le mod) | Positions du ballon et des 22 joueurs journalisées, cohérentes avec l'écran. |
+| M3 | Ballon et joueurs en mémoire (Ghidra + lecture depuis le mod) | Positions du ballon et des 22 joueurs journalisées, cohérentes avec l'écran. Étapes : (1) relever les matrices WORLD de chaque objet dessiné en match ; (2) chercher ces valeurs dans la mémoire de PES depuis le mod ; (3) confirmer la structure d'un joueur avec Ghidra. |
 | M4 | Tommy dans le vrai match | Tommy (modèle de Vice City) dessiné sur la pelouse, contrôlé par le joueur, caméra de PES. |
 | M5 | Tirs | Armes de Vice City, sons d'origine ; un joueur touché tombe et sort du jeu. |
 
