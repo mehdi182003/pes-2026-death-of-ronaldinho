@@ -14,6 +14,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering::Relaxed};
 use std::time::Instant;
 
+use crate::assets::{self, Tommy};
 use crate::game;
 use crate::marker::{self, WorldVertex};
 use crate::overlay::{self, Vertex};
@@ -46,6 +47,10 @@ const DEV_DRAW_PRIMITIVE_UP: usize = 72;
 const DEV_DRAW_INDEXED_PRIMITIVE_UP: usize = 73;
 const DEV_SET_VERTEX_SHADER: usize = 76;
 const DEV_SET_PIXEL_SHADER: usize = 88;
+const DEV_CREATE_TEXTURE: usize = 20;
+// IDirect3DTexture8
+const TEX_LOCK_RECT: usize = 16;
+const TEX_UNLOCK_RECT: usize = 17;
 
 const D3DSBT_ALL: u32 = 1;
 const D3DPT_TRIANGLELIST: u32 = 4;
@@ -80,6 +85,24 @@ const D3DTSS_ALPHAARG2: u32 = 6;
 const D3DTOP_DISABLE: u32 = 1;
 const D3DTOP_SELECTARG2: u32 = 3;
 const D3DTA_DIFFUSE: u32 = 0;
+const D3DTA_TEXTURE: u32 = 2;
+const D3DTSS_COLORARG1: u32 = 2;
+const D3DTSS_ALPHAARG1: u32 = 5;
+const D3DTSS_ADDRESSU: u32 = 13;
+const D3DTSS_ADDRESSV: u32 = 14;
+const D3DTSS_MAGFILTER: u32 = 16;
+const D3DTSS_MINFILTER: u32 = 17;
+const D3DTSS_MIPFILTER: u32 = 18;
+const D3DTOP_MODULATE: u32 = 4;
+const D3DTEXF_NONE: u32 = 0;
+const D3DTEXF_LINEAR: u32 = 2;
+const D3DTADDRESS_WRAP: u32 = 1;
+const D3DRS_ALPHAREF: u32 = 24;
+const D3DRS_ALPHAFUNC: u32 = 25;
+const D3DCMP_GREATER: u32 = 5;
+const D3DFMT_A8R8G8B8: u32 = 21;
+const D3DFMT_INDEX16: u32 = 101;
+const D3DPOOL_MANAGED: u32 = 1;
 
 const PAGE_READWRITE: u32 = 0x04;
 
@@ -699,6 +722,9 @@ unsafe fn draw_mod(
                         pin.as_ptr().cast(),
                         std::mem::size_of::<WorldVertex>() as u32,
                     );
+                    if let Some(tommy) = assets::tommy() {
+                        draw_tommy(device, tommy);
+                    }
                 }
             }
 
@@ -717,5 +743,183 @@ unsafe fn draw_mod(
         }
         apply_state_block(device, saved);
         delete_state_block(device, saved);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tommy
+// ---------------------------------------------------------------------------
+
+/// Tommy's textures on the device, created on first use, by name. In the
+/// managed pool: Direct3D keeps them across `Reset`.
+static TEXTURES: Mutex<Vec<(String, usize)>> = Mutex::new(Vec::new());
+
+/// Creates a texture from RGBA pixels, or null.
+///
+/// # Safety
+/// `device` must be a live IDirect3DDevice8.
+unsafe fn create_texture(device: Com, texture: &asset_bridge::model::Texture) -> Com {
+    // SAFETY (whole block): calls through the vtables, types of d3d8.h.
+    unsafe {
+        let create: unsafe extern "system" fn(
+            Com,
+            u32,
+            u32,
+            u32,
+            u32,
+            u32,
+            u32,
+            *mut Com,
+        ) -> Hresult = std::mem::transmute(method(device, DEV_CREATE_TEXTURE));
+        let mut out: Com = std::ptr::null_mut();
+        if create(
+            device,
+            texture.width,
+            texture.height,
+            1,
+            0,
+            D3DFMT_A8R8G8B8,
+            D3DPOOL_MANAGED,
+            &mut out,
+        ) < 0
+            || out.is_null()
+        {
+            return std::ptr::null_mut();
+        }
+        let lock: unsafe extern "system" fn(
+            Com,
+            u32,
+            *mut [usize; 2],
+            *const c_void,
+            u32,
+        ) -> Hresult = std::mem::transmute(method(out, TEX_LOCK_RECT));
+        let unlock: unsafe extern "system" fn(Com, u32) -> Hresult =
+            std::mem::transmute(method(out, TEX_UNLOCK_RECT));
+        // D3DLOCKED_RECT: pitch (INT), then a pointer to the pixels.
+        let mut locked = [0usize; 2];
+        if lock(out, 0, &mut locked, std::ptr::null(), 0) >= 0 {
+            let (pitch, bits) = (locked[0], locked[1] as *mut u8);
+            let width = texture.width as usize;
+            for row in 0..texture.height as usize {
+                let src = &texture.rgba8[row * width * 4..(row + 1) * width * 4];
+                let dst = std::slice::from_raw_parts_mut(bits.add(row * pitch), width * 4);
+                // A8R8G8B8 is B, G, R, A in memory.
+                for (d, s) in dst
+                    .as_chunks_mut::<4>()
+                    .0
+                    .iter_mut()
+                    .zip(src.as_chunks::<4>().0)
+                {
+                    *d = [s[2], s[1], s[0], s[3]];
+                }
+            }
+            unlock(out, 0);
+        }
+        out
+    }
+}
+
+/// The device texture called `name`, created if needed.
+///
+/// # Safety
+/// `device` must be a live IDirect3DDevice8.
+unsafe fn texture_for(device: Com, tommy: &Tommy, name: &str) -> Com {
+    let Ok(mut cache) = TEXTURES.lock() else {
+        return std::ptr::null_mut();
+    };
+    if let Some((_, texture)) = cache.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)) {
+        return *texture as Com;
+    }
+    let texture = tommy
+        .textures
+        .iter()
+        .find(|t| t.name.eq_ignore_ascii_case(name))
+        // SAFETY: as required by this function.
+        .map_or(std::ptr::null_mut(), |t| unsafe {
+            create_texture(device, t)
+        });
+    log(&format!("texture {name} : {texture:p}"));
+    cache.push((name.to_owned(), texture as usize));
+    texture
+}
+
+/// Draws Tommy. The WORLD matrix must already be PES's logic matrix.
+///
+/// # Safety
+/// `device` must be a live IDirect3DDevice8, inside a scene.
+unsafe fn draw_tommy(device: Com, tommy: &Tommy) {
+    // SAFETY (whole block): calls through the vtables, types of d3d8.h.
+    unsafe {
+        let set_render_state: unsafe extern "system" fn(Com, u32, u32) -> Hresult =
+            std::mem::transmute(method(device, DEV_SET_RENDER_STATE));
+        let set_texture: unsafe extern "system" fn(Com, u32, Com) -> Hresult =
+            std::mem::transmute(method(device, DEV_SET_TEXTURE));
+        let set_tss: unsafe extern "system" fn(Com, u32, u32, u32) -> Hresult =
+            std::mem::transmute(method(device, DEV_SET_TEXTURE_STAGE_STATE));
+        let set_vertex_shader: unsafe extern "system" fn(Com, u32) -> Hresult =
+            std::mem::transmute(method(device, DEV_SET_VERTEX_SHADER));
+        let draw: unsafe extern "system" fn(
+            Com,
+            u32,
+            u32,
+            u32,
+            u32,
+            *const c_void,
+            u32,
+            *const c_void,
+            u32,
+        ) -> Hresult = std::mem::transmute(method(device, DEV_DRAW_INDEXED_PRIMITIVE_UP));
+
+        for (state, value) in [
+            (D3DRS_ZENABLE, 1),
+            (D3DRS_ZWRITEENABLE, 1),
+            (D3DRS_ZBIAS, 0),
+            (D3DRS_ALPHATESTENABLE, 1),
+            (D3DRS_ALPHAREF, 0x7f),
+            (D3DRS_ALPHAFUNC, D3DCMP_GREATER),
+            // HYPOTHÈSE: no culling until the handedness of PES's chain is
+            // known (M4b).
+            (D3DRS_CULLMODE, D3DCULL_NONE),
+        ] {
+            set_render_state(device, state, value);
+        }
+        for (state, value) in [
+            (D3DTSS_COLOROP, D3DTOP_MODULATE),
+            (D3DTSS_COLORARG1, D3DTA_TEXTURE),
+            (D3DTSS_COLORARG2, D3DTA_DIFFUSE),
+            (D3DTSS_ALPHAOP, D3DTOP_MODULATE),
+            (D3DTSS_ALPHAARG1, D3DTA_TEXTURE),
+            (D3DTSS_ALPHAARG2, D3DTA_DIFFUSE),
+            (D3DTSS_MAGFILTER, D3DTEXF_LINEAR),
+            (D3DTSS_MINFILTER, D3DTEXF_LINEAR),
+            (D3DTSS_MIPFILTER, D3DTEXF_NONE),
+            (D3DTSS_ADDRESSU, D3DTADDRESS_WRAP),
+            (D3DTSS_ADDRESSV, D3DTADDRESS_WRAP),
+        ] {
+            set_tss(device, 0, state, value);
+        }
+        set_vertex_shader(device, crate::tommy::FVF);
+        for batch in &tommy.batches {
+            let texture = batch
+                .texture
+                .as_deref()
+                .map_or(std::ptr::null_mut(), |name| {
+                    texture_for(device, tommy, name)
+                });
+            set_texture(device, 0, texture);
+            set_render_state(device, D3DRS_ALPHABLENDENABLE, u32::from(batch.blend));
+            draw(
+                device,
+                D3DPT_TRIANGLELIST,
+                0,
+                batch.vertices.len() as u32,
+                (batch.indices.len() / 3) as u32,
+                batch.indices.as_ptr().cast(),
+                D3DFMT_INDEX16,
+                batch.vertices.as_ptr().cast(),
+                std::mem::size_of::<crate::tommy::TexturedVertex>() as u32,
+            );
+        }
+        set_texture(device, 0, std::ptr::null_mut());
     }
 }

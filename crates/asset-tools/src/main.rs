@@ -248,8 +248,13 @@ fn mod_install(config_file: &Path, dll: Option<PathBuf>) -> Result<ExitCode> {
             .join("../..")
             .join(pes6_mod::install::BUILT_DLL)
     });
-    let installed = pes6_mod::install::install(&dll, &pes6_dir(config_file)?)?;
+    let paths = config::read_paths(config_file)?;
+    let game_dir = paths.check(Game::Pes6)?;
+    let vice_city = paths.check(Game::ViceCity)?;
+    let installed = pes6_mod::install::install(&dll, &game_dir)?;
+    let mod_config = pes6_mod::install::write_config(&game_dir, &vice_city)?;
     println!("Mod installé : {}", installed.display());
+    println!("Configuration du mod : {}", mod_config.display());
     println!(
         "Lancer PES 6, puis lire {} à côté de PES6.exe.",
         pes6_mod::LOG_FILE_NAME

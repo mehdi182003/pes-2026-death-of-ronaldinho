@@ -11,6 +11,9 @@ publish.workspace = true
 name = "dinput8"
 crate-type = ["cdylib", "rlib"]
 
+[dependencies]
+# Tommy's model and textures, read from the player's Vice City install.
+asset-bridge.workspace = true
+
 [dev-dependencies]
 tempfile.workspace = true
-asset-bridge.workspace = true

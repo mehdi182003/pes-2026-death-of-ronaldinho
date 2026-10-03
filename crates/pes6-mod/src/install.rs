@@ -14,6 +14,34 @@ pub const DLL_NAME: &str = "dinput8.dll";
 /// puts the proxy, relative to the workspace root.
 pub const BUILT_DLL: &str = "target/i686-pc-windows-msvc/release/dinput8.dll";
 
+/// Configuration written next to the proxy: where the mod finds Vice City.
+/// Same `[paths]` section as `config.toml`, read with `asset_bridge::config`.
+pub const CONFIG_NAME: &str = "chaos-fc-mod.toml";
+
+/// Path of the mod's configuration for a game executable.
+pub fn config_path(game_exe: &Path) -> PathBuf {
+    game_exe
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join(CONFIG_NAME)
+}
+
+/// TOML basic string for `text`.
+fn toml_string(text: &str) -> String {
+    format!("\"{}\"", text.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+/// Writes the mod's configuration in `game_dir`.
+pub fn write_config(game_dir: &Path, vice_city: &Path) -> Result<PathBuf, InstallError> {
+    let path = game_dir.join(CONFIG_NAME);
+    let text = format!(
+        "# Écrit par `asset-tools mod install` : où le mod Chaos FC trouve Vice City.\n[paths]\nvice_city = {}\n",
+        toml_string(&vice_city.to_string_lossy())
+    );
+    std::fs::write(&path, text).map_err(|e| InstallError::Io(path.clone(), e))?;
+    Ok(path)
+}
+
 #[derive(Debug)]
 pub enum InstallError {
     /// The built DLL does not exist or is not the proxy.
@@ -82,6 +110,10 @@ pub fn uninstall(game_dir: &Path) -> Result<Removed, InstallError> {
         return Err(InstallError::Foreign(target));
     }
     std::fs::remove_file(&target).map_err(|e| InstallError::Io(target.clone(), e))?;
+    let config = game_dir.join(CONFIG_NAME);
+    if config.exists() {
+        std::fs::remove_file(&config).map_err(|e| InstallError::Io(config, e))?;
+    }
     Ok(Removed::Removed(target))
 }
 
@@ -109,6 +141,28 @@ mod tests {
 
         assert_eq!(uninstall(&game).unwrap(), Removed::Removed(installed));
         assert_eq!(uninstall(&game).unwrap(), Removed::NothingInstalled);
+    }
+
+    #[test]
+    fn the_config_gives_vice_city_back() {
+        let tmp = tempfile::tempdir().unwrap();
+        let vice_city = Path::new(r#"C:\Jeux\Rockstar "VC"\ViceCity"#);
+        let written = write_config(tmp.path(), vice_city).unwrap();
+        assert_eq!(written, config_path(&tmp.path().join("PES6.exe")));
+        let paths = asset_bridge::config::read_paths(&written).unwrap();
+        assert_eq!(paths.vice_city.as_deref(), Some(vice_city));
+    }
+
+    #[test]
+    fn uninstall_removes_the_config() {
+        let tmp = tempfile::tempdir().unwrap();
+        let built = fake_build(tmp.path());
+        let game = tmp.path().join("game");
+        std::fs::create_dir(&game).unwrap();
+        install(&built, &game).unwrap();
+        write_config(&game, Path::new(r"C:\VC")).unwrap();
+        uninstall(&game).unwrap();
+        assert!(!game.join(CONFIG_NAME).exists());
     }
 
     #[test]

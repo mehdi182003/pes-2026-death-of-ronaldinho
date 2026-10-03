@@ -37,7 +37,10 @@ pub mod overlay;
 pub mod pe;
 pub mod pes;
 pub mod scene;
+pub mod tommy;
 
+#[cfg(all(windows, target_arch = "x86"))]
+mod assets;
 #[cfg(all(windows, target_arch = "x86"))]
 mod game;
 #[cfg(all(windows, target_arch = "x86"))]
