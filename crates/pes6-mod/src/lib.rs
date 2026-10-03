@@ -32,8 +32,10 @@ pub fn log_path(game_exe: &Path) -> PathBuf {
 }
 
 pub mod install;
+pub mod marker;
 pub mod overlay;
 pub mod pe;
+pub mod scene;
 
 #[cfg(all(windows, target_arch = "x86"))]
 mod proxy;
