@@ -46,6 +46,16 @@ pub const PLAYER_READ_LEN: usize = PLAYER_POSITION + 12;
 /// world.
 pub const LOGIC_UNITS_PER_METRE: f32 = 256.5;
 
+/// WORLD matrix taking logic coordinates to PES's render world, as PES sets
+/// it for its players (logged in M3: exactly `diag(−0.2, 0.2, 0.2)`, row
+/// vectors).
+pub const LOGIC_TO_RENDER: [f32; 16] = [
+    -0.2, 0.0, 0.0, 0.0, //
+    0.0, 0.2, 0.0, 0.0, //
+    0.0, 0.0, 0.2, 0.0, //
+    0.0, 0.0, 0.0, 1.0,
+];
+
 // HYPOTHÈSE: bounds of a logic position on or near the pitch: a 105 m × 68 m
 // pitch is about ±13 500 × ±8 700 units; the margin covers the run-off area.
 pub const PITCH_HALF_EXTENT: f32 = 18_000.0;

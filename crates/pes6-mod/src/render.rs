@@ -431,9 +431,11 @@ unsafe fn count_primitives(device: Com, api: &'static str, primitives: u32) {
             std::mem::transmute(method(device, DEV_GET_VERTEX_SHADER));
         get_vertex_shader(device, &mut fvf);
     }
-    // HYPOTHÈSE: PES's HUD and menus use pre-transformed vertices
-    // (D3DFVF_XYZRHW), like the mod's banner; its 3D does not.
-    if fvf & D3DFVF_XYZRHW != 0 && fvf < 0x1_0000 {
+    // PES's 3D uses vertex shaders, whose handles are odd (0x3, 0x7, 0xb…);
+    // a vertex format always has bit 0 clear. Its 2D starts with the first
+    // pre-transformed format: 63 DrawPrimitiveUP in format 0x144
+    // (XYZRHW | DIFFUSE | TEX1) in the trace of the M4a test.
+    if fvf & 1 == 0 && fvf & D3DFVF_XYZRHW != 0 {
         // SAFETY: as required by this function.
         unsafe { draw_world_once(device, "première image 2D de PES") };
     }
@@ -701,7 +703,13 @@ unsafe fn draw_world_once(device: Com, reason: &'static str) {
     }
     WORLD_DRAWN.store(true, Relaxed);
     record_always(Event::ModWorld(reason));
-    let logic_world = LOGIC_WORLD.lock().ok().and_then(|last| *last);
+    // PES draws its players through vertex shaders in some matches, without
+    // the WORLD matrix of scale 0.2: fall back on its value, logged exactly in M3.
+    let logic_world = LOGIC_WORLD
+        .lock()
+        .ok()
+        .and_then(|last| *last)
+        .or(Some(pes::LOGIC_TO_RENDER));
     MOD_DRAWING.store(true, Relaxed);
     // SAFETY: as required by this function.
     unsafe { draw_world(device, &camera, logic_world) };
