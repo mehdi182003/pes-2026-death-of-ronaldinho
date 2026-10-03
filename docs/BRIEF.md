@@ -293,7 +293,7 @@ Mehdi veut la jouabilité réelle de PES, pas une réécriture. Décision : **mo
 
 | Jalon | Livrable | Critère de réussite |
 | --- | --- | --- |
-| M1 | Mod chargé dans PES6.exe (proxy `dinput8.dll`, `asset-tools mod install`/`uninstall`) | PES 6 se lance et se joue normalement ; `chaos-fc-mod.log` apparaît à côté de PES6.exe. |
+| M1 | Mod chargé dans PES6.exe (proxy `dinput8.dll`, `asset-tools mod install`/`uninstall`) | PES 6 se lance et se joue normalement ; `chaos-fc-mod.log` apparaît à côté de PES6.exe. **Validé le 3 octobre 2026 par Mehdi** (match joué, commandes normales ; journal : chargement, DirectInput 8 système, déchargement). |
 | M2 | Accroche Direct3D 9 | Un objet de test dessiné dans le vrai match, à un point fixe du terrain. |
 | M3 | Ballon et joueurs en mémoire (Ghidra + lecture depuis le mod) | Positions du ballon et des 22 joueurs journalisées, cohérentes avec l'écran. |
 | M4 | Tommy dans le vrai match | Tommy (modèle de Vice City) dessiné sur la pelouse, contrôlé par le joueur, caméra de PES. |
