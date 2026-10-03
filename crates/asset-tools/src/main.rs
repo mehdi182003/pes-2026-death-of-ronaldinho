@@ -11,6 +11,7 @@ use asset_bridge::vice_city;
 use asset_tools::dump;
 use asset_tools::source::{self, Source};
 use clap::{Parser, Subcommand};
+use dinput8 as pes6_mod;
 use formats_pes::content::{self, Packing, Report};
 use formats_rw::sfx::{self, SoundBank};
 
@@ -45,6 +46,10 @@ enum Command {
     /// Archives AFS du dossier dat de PES 6.
     #[command(subcommand)]
     Afs(AfsCommand),
+
+    /// Mod chargé dans le vrai PES6.exe (dinput8.dll à côté de l'exécutable).
+    #[command(subcommand)]
+    Mod(ModCommand),
 
     /// Dump hexadécimal annoté : arbre des chunks pour un fichier RenderWare (DFF, TXD).
     Dump {
@@ -135,6 +140,19 @@ enum AfsCommand {
 }
 
 #[derive(Subcommand)]
+enum ModCommand {
+    /// Copie le mod compilé à côté de PES6.exe, sans jamais remplacer un dinput8.dll étranger.
+    Install {
+        /// DLL à installer (par défaut : target/i686-pc-windows-msvc/release/dinput8.dll).
+        #[arg(long)]
+        dll: Option<PathBuf>,
+    },
+
+    /// Retire le mod du dossier de PES 6.
+    Uninstall,
+}
+
+#[derive(Subcommand)]
 enum ImgCommand {
     /// Liste les fichiers de l'archive.
     List {
@@ -181,6 +199,8 @@ fn main() -> ExitCode {
             all,
             out,
         }) => afs_extract(&config_file, &archive, &indices, all, out.as_deref()),
+        Command::Mod(ModCommand::Install { dll }) => mod_install(&config_file, dll),
+        Command::Mod(ModCommand::Uninstall) => mod_uninstall(&config_file),
         Command::Dump {
             source,
             raw,
@@ -216,6 +236,33 @@ fn check_config(config_file: &Path) -> Result<ExitCode> {
     } else {
         ExitCode::FAILURE
     })
+}
+
+fn pes6_dir(config_file: &Path) -> Result<PathBuf> {
+    Ok(config::read_paths(config_file)?.check(Game::Pes6)?)
+}
+
+fn mod_install(config_file: &Path, dll: Option<PathBuf>) -> Result<ExitCode> {
+    let dll = dll.unwrap_or_else(|| {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join(pes6_mod::install::BUILT_DLL)
+    });
+    let installed = pes6_mod::install::install(&dll, &pes6_dir(config_file)?)?;
+    println!("Mod installé : {}", installed.display());
+    println!(
+        "Lancer PES 6, puis lire {} à côté de PES6.exe.",
+        pes6_mod::LOG_FILE_NAME
+    );
+    Ok(ExitCode::SUCCESS)
+}
+
+fn mod_uninstall(config_file: &Path) -> Result<ExitCode> {
+    match pes6_mod::install::uninstall(&pes6_dir(config_file)?)? {
+        pes6_mod::install::Removed::Removed(path) => println!("Mod retiré : {}", path.display()),
+        pes6_mod::install::Removed::NothingInstalled => println!("Aucun mod installé."),
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 fn img_list(config_file: &Path, filter: Option<&str>) -> Result<ExitCode> {

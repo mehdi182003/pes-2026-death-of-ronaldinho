@@ -285,6 +285,26 @@ On valide d'abord que les assets des deux jeux sont lisibles (J1 à J5), avant d
 | J10 | Arbitre | L'arbitre poursuit et plaque Tommy après un tir. |
 | J11 | 11 contre 11, stade PES, réglages | Match complet stable, ressenti validé par Mokhmad. |
 
+### Route « mod du vrai PES 6 » (décision de Mehdi, 3 octobre 2026)
+
+Mehdi veut la jouabilité réelle de PES, pas une réécriture. Décision : **modder d'abord le vrai PES6.exe**, et garder le moteur Rust (J7 à J11) comme repli et comme source des parsers (Tommy, armes, sons de Vice City). Le mod est la crate `pes6-mod` : une DLL 32 bits nommée `dinput8.dll`, posée à côté de PES6.exe (qui importe `DINPUT8.dll`), qui transmet `DirectInput8Create` à la DLL du système. Plan et journal : `docs/pes6-mod.md`.
+
+**Constats (M1) :** PES6.exe (21,9 Mo, compilé le 9 septembre 2006) est natif x86, sans anti-triche, et protégé par SecuROM (sections renommées `age`, `agis`, `quod`, `.rld`). Sa section de code est lisible statiquement (Ghidra). On ne touche pas à SecuROM et on évite les débogueurs (contrôles anti-débogage) : analyse statique, puis lecture de la mémoire depuis le mod. Il importe `d3d9.dll` (`Direct3DCreate9`) et `DINPUT8.dll`.
+
+| Jalon | Livrable | Critère de réussite |
+| --- | --- | --- |
+| M1 | Mod chargé dans PES6.exe (proxy `dinput8.dll`, `asset-tools mod install`/`uninstall`) | PES 6 se lance et se joue normalement ; `chaos-fc-mod.log` apparaît à côté de PES6.exe. |
+| M2 | Accroche Direct3D 9 | Un objet de test dessiné dans le vrai match, à un point fixe du terrain. |
+| M3 | Ballon et joueurs en mémoire (Ghidra + lecture depuis le mod) | Positions du ballon et des 22 joueurs journalisées, cohérentes avec l'écran. |
+| M4 | Tommy dans le vrai match | Tommy (modèle de Vice City) dessiné sur la pelouse, contrôlé par le joueur, caméra de PES. |
+| M5 | Tirs | Armes de Vice City, sons d'origine ; un joueur touché tombe et sort du jeu. |
+
+### Vision longue (Mehdi, 3 octobre 2026), après la route « mod du vrai PES 6 »
+
+- **Le stade PES dans Vice City :** le stade de PES est ajouté à la carte de Vice City comme une extension. Tommy y entre, le menu « Match rapide » de PES s'ouvre (choix des équipes, etc., le déroulement normal de PES), puis le match avec Tommy (route ci-dessus).
+- **Les joueurs PES dans les rues de Vice City :** chaque joueur PES (par exemple Ronaldinho) apparaît dans Vice City sous forme d'image plate (PNG, rendue depuis son modèle PES), et Tommy peut aussi lui tirer dessus en dehors du stade.
+- Vice City a déjà un chargeur ASI installé chez Mehdi : c'est la porte d'entrée côté GTA. Le détail sera planifié une fois M5 validé.
+
 ## Conventions de travail pour Claude Code
 
 Petites étapes, un commit par étape, et toujours une vérification par Mokhmad avant de passer au jalon suivant.
