@@ -32,6 +32,8 @@ pub enum Event {
     },
     Draw {
         api: &'static str,
+        /// Vertex format (or shader handle) current at the draw.
+        fvf: u32,
         primitives: u32,
     },
     /// Where the mod drew its 3D objects, and why there.
@@ -52,32 +54,43 @@ impl fmt::Display for Event {
             }
             Self::VertexShader(fvf) => write!(f, "SetVertexShader {fvf:#x}"),
             Self::RenderState { state, value } => write!(f, "SetRenderState {state} = {value:#x}"),
-            Self::Draw { api, primitives } => write!(f, "{api} {primitives}"),
+            Self::Draw {
+                api,
+                fvf,
+                primitives,
+            } => write!(f, "{api} (format {fvf:#x}) {primitives}"),
             Self::ModWorld(reason) => write!(f, ">>> le mod dessine ses objets 3D ici ({reason})"),
         }
     }
 }
 
-/// Lines for the log: runs of draws are merged ("12 × DrawIndexedPrimitiveUP,
-/// 3400 primitives"), everything else is listed as is.
+/// Lines for the log: runs of draws with the same call and vertex format are
+/// merged ("12 × DrawIndexedPrimitiveUP (format 0x142), 3400 primitives"),
+/// everything else is listed as is.
 pub fn summarize(events: &[Event]) -> Vec<String> {
     let mut lines = Vec::new();
-    let mut run: Option<(&str, u32, u64)> = None;
-    let flush = |run: &mut Option<(&str, u32, u64)>, lines: &mut Vec<String>| {
-        if let Some((api, calls, primitives)) = run.take() {
-            lines.push(format!("{calls} × {api}, {primitives} primitives"));
+    let mut run: Option<(&str, u32, u32, u64)> = None;
+    let flush = |run: &mut Option<(&str, u32, u32, u64)>, lines: &mut Vec<String>| {
+        if let Some((api, fvf, calls, primitives)) = run.take() {
+            lines.push(format!(
+                "{calls} × {api} (format {fvf:#x}), {primitives} primitives"
+            ));
         }
     };
     for event in events {
         match event {
-            Event::Draw { api, primitives } => match &mut run {
-                Some((run_api, calls, total)) if run_api == api => {
+            Event::Draw {
+                api,
+                fvf,
+                primitives,
+            } => match &mut run {
+                Some((run_api, run_fvf, calls, total)) if run_api == api && run_fvf == fvf => {
                     *calls += 1;
                     *total += u64::from(*primitives);
                 }
                 _ => {
                     flush(&mut run, &mut lines);
-                    run = Some((api, 1, u64::from(*primitives)));
+                    run = Some((api, *fvf, 1, u64::from(*primitives)));
                 }
             },
             other => {
@@ -94,37 +107,35 @@ pub fn summarize(events: &[Event]) -> Vec<String> {
 mod tests {
     use super::*;
 
+    fn draw(api: &'static str, fvf: u32, primitives: u32) -> Event {
+        Event::Draw {
+            api,
+            fvf,
+            primitives,
+        }
+    }
+
     #[test]
-    fn draws_are_merged_by_run() {
+    fn draws_are_merged_by_call_and_format() {
         let events = [
             Event::BeginScene,
-            Event::Draw {
-                api: "DIP",
-                primitives: 10,
-            },
-            Event::Draw {
-                api: "DIP",
-                primitives: 5,
-            },
-            Event::Draw {
-                api: "DPUP",
-                primitives: 2,
-            },
-            Event::VertexShader(0x44),
-            Event::Draw {
-                api: "DPUP",
-                primitives: 2,
-            },
+            draw("DIP", 0x152, 10),
+            draw("DIP", 0x152, 5),
+            draw("DPUP", 0x152, 2),
+            draw("DPUP", 0x144, 2),
+            Event::SetRenderTarget,
+            draw("DPUP", 0x144, 2),
             Event::EndScene,
         ];
         assert_eq!(
             summarize(&events),
             vec![
                 "BeginScene",
-                "2 × DIP, 15 primitives",
-                "1 × DPUP, 2 primitives",
-                "SetVertexShader 0x44",
-                "1 × DPUP, 2 primitives",
+                "2 × DIP (format 0x152), 15 primitives",
+                "1 × DPUP (format 0x152), 2 primitives",
+                "1 × DPUP (format 0x144), 2 primitives",
+                "SetRenderTarget",
+                "1 × DPUP (format 0x144), 2 primitives",
                 "EndScene",
             ]
         );

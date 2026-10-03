@@ -53,6 +53,7 @@ const DEV_CREATE_IMAGE_SURFACE: usize = 27;
 const DEV_GET_FRONT_BUFFER: usize = 30;
 const DEV_SET_RENDER_TARGET: usize = 31;
 const DEV_CLEAR: usize = 36;
+const DEV_GET_VERTEX_SHADER: usize = 77;
 // IUnknown
 const COM_RELEASE: usize = 2;
 // IDirect3DSurface8
@@ -126,11 +127,6 @@ const MIN_SCENE_PRIMITIVES: u64 = 5_000;
 
 /// How often the camera and frame rate are written to the log.
 const LOG_EVERY_SECONDS: u64 = 10;
-
-#[link(name = "user32")]
-unsafe extern "system" {
-    fn GetAsyncKeyState(key: i32) -> i16;
-}
 
 unsafe extern "system" {
     fn GetModuleHandleW(name: *const u16) -> *mut c_void;
@@ -417,14 +413,38 @@ fn record_always(event: Event) {
     }
 }
 
-fn count_primitives(api: &'static str, primitives: u32) {
+/// Counts a draw of PES and, at its first draw with pre-transformed (2D)
+/// vertices after the 3D scene, draws the mod's 3D objects just before it.
+///
+/// # Safety
+/// `device` must be the game's device, inside its scene.
+unsafe fn count_primitives(device: Com, api: &'static str, primitives: u32) {
     if MOD_DRAWING.load(Relaxed) {
         return;
+    }
+    // PES sets its vertex formats through state blocks (no SetVertexShader
+    // call in the M4a trace): ask the device which one is current.
+    let mut fvf = 0u32;
+    // SAFETY: IDirect3DDevice8::GetVertexShader(DWORD*), as in d3d8.h.
+    unsafe {
+        let get_vertex_shader: unsafe extern "system" fn(Com, *mut u32) -> Hresult =
+            std::mem::transmute(method(device, DEV_GET_VERTEX_SHADER));
+        get_vertex_shader(device, &mut fvf);
+    }
+    // HYPOTHÈSE: PES's HUD and menus use pre-transformed vertices
+    // (D3DFVF_XYZRHW), like the mod's banner; its 3D does not.
+    if fvf & D3DFVF_XYZRHW != 0 && fvf < 0x1_0000 {
+        // SAFETY: as required by this function.
+        unsafe { draw_world_once(device, "première image 2D de PES") };
     }
     if let Ok(mut frame) = FRAME.lock() {
         frame.draw(primitives);
     }
-    record(Event::Draw { api, primitives });
+    record(Event::Draw {
+        api,
+        fvf,
+        primitives,
+    });
 }
 
 /// The real method stored in `original`, with the signature `F`.
@@ -490,13 +510,6 @@ unsafe extern "system" fn hooked_set_transform(
 }
 
 unsafe extern "system" fn hooked_set_vertex_shader(this: Com, handle: u32) -> Hresult {
-    // HYPOTHÈSE: PES draws its HUD and menus with pre-transformed vertices
-    // (D3DFVF_XYZRHW), like the mod's banner; switching to them ends its 3D.
-    // The frame trace shows whether that holds.
-    if handle & D3DFVF_XYZRHW != 0 && handle < 0x1_0000 && !MOD_DRAWING.load(Relaxed) {
-        // SAFETY: `this` is the game's device, inside its scene.
-        unsafe { draw_world_once(this, "PES passe aux sommets 2D") };
-    }
     record(Event::VertexShader(handle));
     // SAFETY: real IDirect3DDevice8::SetVertexShader.
     unsafe {
@@ -513,10 +526,6 @@ unsafe extern "system" fn hooked_begin_scene(this: Com) -> Hresult {
 }
 
 unsafe extern "system" fn hooked_end_scene(this: Com) -> Hresult {
-    if !MOD_DRAWING.load(Relaxed) {
-        // SAFETY: `this` is the game's device, inside its scene.
-        unsafe { draw_world_once(this, "fin de la scène de PES") };
-    }
     record(Event::EndScene);
     // SAFETY: real IDirect3DDevice8::EndScene.
     unsafe { real::<unsafe extern "system" fn(Com) -> Hresult>(&REAL_END_SCENE)(this) }
@@ -541,6 +550,12 @@ unsafe extern "system" fn hooked_clear(
 }
 
 unsafe extern "system" fn hooked_set_render_target(this: Com, target: Com, depth: Com) -> Hresult {
+    if !MOD_DRAWING.load(Relaxed) {
+        // PES draws its frame into a texture, then copies it to the screen
+        // (M4a trace): after its 3D, changing target leaves the scene.
+        // SAFETY: `this` is the game's device, inside its scene.
+        unsafe { draw_world_once(this, "PES change de cible de rendu") };
+    }
     record(Event::SetRenderTarget);
     // SAFETY: real IDirect3DDevice8::SetRenderTarget.
     unsafe {
@@ -572,7 +587,8 @@ unsafe extern "system" fn hooked_draw_primitive(
     start: u32,
     count: u32,
 ) -> Hresult {
-    count_primitives("DrawPrimitive", count);
+    // SAFETY: `this` is the game's device, drawing inside its scene.
+    unsafe { count_primitives(this, "DrawPrimitive", count) };
     // SAFETY: real IDirect3DDevice8::DrawPrimitive.
     unsafe {
         real::<unsafe extern "system" fn(Com, u32, u32, u32) -> Hresult>(&REAL_DRAW_PRIMITIVE)(
@@ -589,7 +605,8 @@ unsafe extern "system" fn hooked_draw_indexed_primitive(
     start: u32,
     count: u32,
 ) -> Hresult {
-    count_primitives("DrawIndexedPrimitive", count);
+    // SAFETY: `this` is the game's device, drawing inside its scene.
+    unsafe { count_primitives(this, "DrawIndexedPrimitive", count) };
     // SAFETY: real IDirect3DDevice8::DrawIndexedPrimitive.
     unsafe {
         real::<unsafe extern "system" fn(Com, u32, u32, u32, u32, u32) -> Hresult>(
@@ -605,7 +622,8 @@ unsafe extern "system" fn hooked_draw_primitive_up(
     data: *const c_void,
     stride: u32,
 ) -> Hresult {
-    count_primitives("DrawPrimitiveUP", count);
+    // SAFETY: `this` is the game's device, drawing inside its scene.
+    unsafe { count_primitives(this, "DrawPrimitiveUP", count) };
     // SAFETY: real IDirect3DDevice8::DrawPrimitiveUP.
     unsafe {
         real::<unsafe extern "system" fn(Com, u32, u32, *const c_void, u32) -> Hresult>(
@@ -626,7 +644,8 @@ unsafe extern "system" fn hooked_draw_indexed_primitive_up(
     data: *const c_void,
     stride: u32,
 ) -> Hresult {
-    count_primitives("DrawIndexedPrimitiveUP", count);
+    // SAFETY: `this` is the game's device, drawing inside its scene.
+    unsafe { count_primitives(this, "DrawIndexedPrimitiveUP", count) };
     type Draw = unsafe extern "system" fn(
         Com,
         u32,
@@ -825,9 +844,10 @@ static FRAMES: AtomicU64 = AtomicU64::new(0);
 /// Frames with a match camera, to trace one about 10 s into the match.
 static MATCH_FRAMES: AtomicU64 = AtomicU64::new(0);
 const TRACE_AT_MATCH_FRAME: u64 = 600;
-/// Virtual-key code of the capture key, F9.
-const CAPTURE_KEY: i32 = 0x78;
-static CAPTURE_KEY_DOWN: AtomicBool = AtomicBool::new(false);
+/// Captures of the screen, about 10, 30 and 60 s into the match (F9 cannot
+/// be read: PES takes the keyboard through DirectInput).
+const CAPTURE_AT_MATCH_FRAMES: [u64; 3] = [600, 1800, 3600];
+static CAPTURED: AtomicBool = AtomicBool::new(false);
 static CAPTURES: AtomicU64 = AtomicU64::new(0);
 
 struct LogClock {
@@ -958,14 +978,13 @@ unsafe extern "system" fn hooked_present(
 
     // The next frame starts here.
     WORLD_DRAWN.store(false, Relaxed);
-    // SAFETY: GetAsyncKeyState only reads the keyboard state.
-    let key_down = unsafe { GetAsyncKeyState(CAPTURE_KEY) } as u16 & 0x8000 != 0;
-    if key_down && !CAPTURE_KEY_DOWN.swap(true, Relaxed) {
+    if CAPTURE_AT_MATCH_FRAMES.contains(&MATCH_FRAMES.load(Relaxed))
+        && !CAPTURED.swap(true, Relaxed)
+    {
         // SAFETY: `this` is the game's live device, outside any scene.
         unsafe { capture(this) };
-        TRACE_NEXT.store(true, Relaxed);
-    } else if !key_down {
-        CAPTURE_KEY_DOWN.store(false, Relaxed);
+    } else if !CAPTURE_AT_MATCH_FRAMES.contains(&MATCH_FRAMES.load(Relaxed)) {
+        CAPTURED.store(false, Relaxed);
     }
     if TRACE_NEXT.swap(false, Relaxed)
         && let Ok(mut trace) = TRACE.lock()
