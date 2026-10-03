@@ -1,0 +1,19 @@
+[package]
+name = "pes6-mod"
+description = "Mod loaded inside the real PES6.exe through a dinput8.dll proxy (32-bit Windows only)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lib]
+# PES6.exe imports DINPUT8.dll: the mod is dropped next to it under that name.
+name = "dinput8"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# Tommy's model and textures, read from the player's Vice City install.
+asset-bridge.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

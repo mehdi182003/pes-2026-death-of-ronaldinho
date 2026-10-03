@@ -14,12 +14,12 @@ Ce document est le brief de référence. Claude Code le relit avant chaque jalon
 
 Aucun fichier issu de GTA Vice City ou de PES ne doit jamais entrer dans le dépôt Git. Le jeu lit tout depuis les installations du joueur.
 
-1. **Aucun asset dans le dépôt.** Modèles, textures, animations, sons et fichiers extraits restent hors du repo. Le dossier de cache d'extraction est dans le `.gitignore` dès le premier commit.
+1. **Aucun asset dans le dépôt.** Modèles, textures, animations, sons, fichiers extraits et sorties de décompilation restent hors du repo. Le dossier de cache d'extraction est dans le `.gitignore` dès le premier commit.
 2. **Chemins configurables.** Le joueur indique l'emplacement de ses copies de Vice City et de PES 6 dans un fichier de configuration (`config.toml`). Le jeu refuse de démarrer avec un message clair si un chemin manque.
-3. **Pas de code d'origine.** Interdiction d'utiliser ou de s'inspirer ligne à ligne de reVC, re3, ou du code source de GTA V qui a fuité. Ces projets ont fait l'objet de poursuites par Take-Two.
-4. **Pas de décompilation des exécutables pour copier du code.** Le comportement des jeux est reproduit par observation (vidéos, mesures en jeu). La documentation publique des formats de fichiers est autorisée.
-5. **Références open source autorisées** pour comprendre les formats : la documentation du wiki GTAMods, librw, OpenRW, les outils de la scène de modding PES. Respecter leurs licences si du code est repris.
-6. **Tests sans assets commités.** Les tests qui lisent de vrais fichiers sont ignorés automatiquement si les chemins des jeux ne sont pas configurés.
+3. **Références open source autorisées** pour comprendre les formats : la documentation du wiki GTAMods, librw, OpenRW, les outils de la scène de modding PES. Respecter leurs licences si du code est repris.
+4. **Tests sans assets commités.** Les tests qui lisent de vrais fichiers sont ignorés automatiquement si les chemins des jeux ne sont pas configurés.
+
+**Décision de Mehdi (3 octobre 2026) :** les anciennes règles « pas de code d'origine (reVC, re3, code de GTA V qui a fuité) » et « pas de décompilation des exécutables » sont supprimées, ainsi que l'interdiction de déchiffrer les fichiers chiffrés de PES. Objectif : retrouver la physique, les modèles et la jouabilité réelles des deux jeux par reverse engineering complet (skills universal-modder : `reverse-engineering`, `mashup-mods`). Cette décision s'applique au fork de Mehdi (`mehdi182003/pes-2026-death-of-ronaldinho`), pas au dépôt de Mokhmad (`MokhmadGUIRIEV/chaos-fc`). Risque connu : Take-Two a poursuivi les auteurs de re3 et reVC ; les sorties de décompilation restent hors du dépôt (règle 1).
 
 **Mise en œuvre (J0) :**
 
@@ -176,7 +176,7 @@ Références : le wiki GTAMods (pages RenderWare, DFF, TXD, IFP, IMG), librw et 
 - `formats-pes` lit les archives (`afs`), l'en-tête compressé (`packed`, avec flate2) et reconnaît les contenus (`content`) ; `asset-bridge::pes6` ouvre le dossier `dat` et porte la carte de `0_text.afs`. Les fichiers sont désignés par archive et numéro (`0_text:1943`), faute de noms.
 - Les contenus non reconnus sont listés avec leurs premiers octets, jamais devinés.
 - Les tests sur les fichiers de PES vérifient des propriétés (contenus des sections, fichiers illisibles cantonnés aux zones chiffrées), pas des nombres exacts.
-- **Les fichiers chiffrés ne sont pas déchiffrés.** C'est une protection du jeu ; la contourner pose une question juridique (mesures techniques de protection) qui dépasse les règles du projet. Chaos FC s'en passe, sauf décision contraire de Mokhmad et Mehdi, à consigner ici.
+- **Les fichiers chiffrés ne sont pas déchiffrés.** C'est une protection du jeu ; la contourner pose une question juridique (mesures techniques de protection) qui dépasse les règles du projet. Chaos FC s'en passe, sauf décision contraire de Mokhmad et Mehdi, à consigner ici. **Levée par Mehdi le 3 octobre 2026 sur son fork** (voir « Contraintes légales »).
 
 **Reste à faire (J4)** : validé avec réserves. À reprendre :
 
@@ -203,6 +203,17 @@ Références : le wiki GTAMods (pages RenderWare, DFF, TXD, IFP, IMG), librw et 
 - Le visualiseur fait jouer une animation de Vice City à Tommy et, retargetée, au joueur PES placé à côté (`--anim run_player --pes …`).
 - Les animations propres à PES (format `07 12 01 20`, HYPOTHÈSE) ne sont pas encore lues : le critère de J6 est rempli avec une animation de Vice City. Elles restent à étudier pour J7 et J8 (course, passe, tir des joueurs PES).
 
+**Constats (J7)**, détaillés dans `docs/formats/pes-stadium.md` : les stades sont dans `0_text.afs` au-delà de la carte communautaire (groupes de 11 fichiers à partir du n° 6940). Le n° 6949 est le dôme de Sapporo complet : pelouse et motif de tonte, lignes, panneaux, tribunes, toit, écran géant, bancs, photographes et staff. Un modèle nomme ses textures par numéro (table à l'offset 12), les conteneurs ont des emplacements vides (position 0), les stades sont Y vers le bas à 51,3 unités par mètre. Les textures des ballons sont rangées en swizzle PS2 (décodé). Les buts et les filets de PES n'ont pas été trouvés.
+
+**Décisions (J7) :**
+
+- `cargo run -p game` lance le match ; la scène de tir de J3 devient `cargo run -p game -- tir`. `--capture <fichier.png>` enregistre une image puis ferme.
+- Le décor vient de PES (`Pes6::load_scenery`, stade 0_text:6949), affiché sans éclairage ajouté. Les buts sont faits aux dimensions réglementaires, habillés de la texture de filet du stade, en attendant ceux de PES. HYPOTHÈSE : masque de tonte atténué à 20 %.
+- Physique avec bevy_rapier3d : ballon de 22 cm et 430 g, traînée, effet (Magnus) et frottement du gazon calculés à part ; poteaux, barres, filets et murs invisibles aux panneaux.
+- Joueur contrôlé au clavier ou à la manette, caméra latérale serrée comme celle de PES ; animations de Vice City retargetées en attendant celles de PES.
+- Un but compte quand le ballon a entièrement franchi la ligne entre les poteaux et sous la barre ; score à l'écran, puis engagement au centre. Le « BUT ! » affiché est provisoire : les célébrations de PES viendront avec ses animations.
+- **Demande de Mehdi (2 octobre 2026)** : tout ce qu'on voit dans un match de PES doit venir de PES (entrée des joueurs, célébrations, public, sons...). Les animations PES passent donc avant le 3 contre 3 (jalon J7b).
+
 **Plan de repli pour les animations PES :** si elles restent illisibles après un effort raisonnable, utiliser des animations libres de droits (par exemple Mixamo) retargetées sur le squelette PES. Le jalon correspondant ne doit pas bloquer tout le projet.
 
 ## Méthode de reverse engineering
@@ -216,7 +227,7 @@ Chaque format suit le même cycle : hypothèse, parser, validation visuelle, doc
 5. **Valider visuellement** dans le visualiseur d'assets. Un modèle qui s'affiche correctement valide l'hypothèse. Un modèle déformé indique un champ mal lu.
 6. **Documenter le résultat** dans `docs/formats/<format>.md` : structure confirmée, champs encore inconnus, fichiers testés.
 
-Pour le comportement des jeux (vitesse de course, cadence de tir, rebonds du ballon), on procède par observation : vidéos de gameplay, mesures en jeu, puis réglage de constantes dans un fichier de tuning. Jamais de décompilation de l'exécutable.
+Pour le comportement des jeux (vitesse de course, cadence de tir, rebonds du ballon), on procède par observation : vidéos de gameplay, mesures en jeu, puis réglage de constantes dans un fichier de tuning. Depuis le 3 octobre 2026, la décompilation des exécutables est aussi permise (voir « Contraintes légales »).
 
 L'IA ne sait pas juger si un rendu ou un ressenti est correct. À chaque validation visuelle, Claude Code demande à Mokhmad de lancer le build et de confirmer ce qu'il voit, captures d'écran à l'appui.
 
@@ -268,10 +279,52 @@ On valide d'abord que les assets des deux jeux sont lisibles (J1 à J5), avant d
 | J5 | Modèle joueur PES 6 | Un joueur PES texturé s'affiche à côté de Tommy, à la bonne échelle. **Validé le 2 octobre 2026 par Mehdi, avec réserves** (tenue lisible n° 419, les maillots d'équipes étant chiffrés ; numéros et nom pas affichés ; petites taches de peau sur les manches). |
 | J6 | Squelettes et retargeting | Une même animation joue correctement sur Tommy et sur un joueur PES. **Validé le 2 octobre 2026 par Mehdi** (`run_player` sur Tommy et sur le corps n° 1010 ; les animations propres à PES restent à lire). |
 | J7 | Foot minimal | Terrain, ballon physique, un joueur contrôlé, buts qui comptent. |
+| J7b | Animations PES | Les animations de PES (format `07 12 01 20`) lues et jouées : course, passe, tir, célébration, entrée des joueurs. |
 | J8 | 3 contre 3 avec IA basique | Un match jouable de bout en bout, sans Tommy. |
 | J9 | Tommy dans le match | Bascule foot/arme, joueurs abattus en ragdoll, corps persistants. Bazooka (roquette, explosion). |
 | J10 | Arbitre | L'arbitre poursuit et plaque Tommy après un tir. |
 | J11 | 11 contre 11, stade PES, réglages | Match complet stable, ressenti validé par Mokhmad. |
+
+### Route « mod du vrai PES 6 » (décision de Mehdi, 3 octobre 2026)
+
+Mehdi veut la jouabilité réelle de PES, pas une réécriture. Décision : **modder d'abord le vrai PES6.exe**, et garder le moteur Rust (J7 à J11) comme repli et comme source des parsers (Tommy, armes, sons de Vice City). Le mod est la crate `pes6-mod` : une DLL 32 bits nommée `dinput8.dll`, posée à côté de PES6.exe (qui importe `DINPUT8.dll`), qui transmet `DirectInput8Create` à la DLL du système. Plan et journal : `docs/pes6-mod.md`.
+
+**Méthode (décision de Mehdi, 3 octobre 2026) :** pour le mod du vrai PES 6, toute structure en mémoire vient du code décompilé (Ghidra), jamais de recherches heuristiques.
+
+**Constats (M2a)**, journal du mod : PES 6 dessine en **pipeline fixe** (aucun vertex shader créé) ; une matrice `VIEW` et une `PROJECTION` par image via `SetTransform`. Le périphérique est créé en 640×480 chez Mehdi (réglage de PES), en traitement de sommets mixte (`0x80`). La projection inverse l'axe Y.
+
+**Constats (M1) :** PES6.exe (21,9 Mo, compilé le 9 septembre 2006) est natif x86, sans anti-triche, et protégé par SecuROM (sections renommées `age`, `agis`, `quod`, `.rld`). Sa section de code est lisible statiquement (Ghidra). On ne touche pas à SecuROM et on évite les débogueurs (contrôles anti-débogage) : analyse statique, puis lecture de la mémoire depuis le mod. Il importe **`d3d8.dll`** (`Direct3DCreate8` : PES 6 est un jeu **Direct3D 8**) et `DINPUT8.dll`, appelés par des sauts `jmp [emplacement]` vers sa table d'imports (emplacements `0x77d3a8` et `0x77d01c`). Les chaînes `d3d9`/`Direct3DCreate9` sont dans les sections de SecuROM, pas dans les imports du jeu.
+
+| Jalon | Livrable | Critère de réussite |
+| --- | --- | --- |
+| M1 | Mod chargé dans PES6.exe (proxy `dinput8.dll`, `asset-tools mod install`/`uninstall`) | PES 6 se lance et se joue normalement ; `chaos-fc-mod.log` apparaît à côté de PES6.exe. **Validé le 3 octobre 2026 par Mehdi** (match joué, commandes normales ; journal : chargement, DirectInput 8 système, déchargement). |
+| M2a | Accroche Direct3D 8 (`Direct3DCreate8` → `CreateDevice` → `Present`) | Un bandeau « CHAOS FC » s'affiche en haut à gauche, par-dessus les menus et le match, sans gêner le jeu ; le journal indique comment PES envoie ses matrices. **Validé le 3 octobre 2026 par Mehdi** (bandeau visible dans les menus et en match, jeu normal). |
+| M2b | Objet dans le monde | Un objet de test dessiné dans le vrai match, à un point fixe du terrain. **Validé le 3 octobre 2026 par Mehdi** (repère au point central, caché par les joueurs, absent des menus ; poteau bleu vers le ciel : monde Y vers le bas). |
+| M3 | Ballon et joueurs en mémoire (Ghidra + lecture depuis le mod) | Positions du ballon et des 22 joueurs journalisées, cohérentes avec l'écran. Étapes : (1) relever les matrices WORLD de chaque objet dessiné en match ; (2) chercher ces valeurs dans la mémoire de PES depuis le mod ; (3) confirmer la structure d'un joueur avec Ghidra. **Ballon validé le 3 octobre 2026 par Mehdi** (épingle sur le ballon). Joueurs : tableau de 23 × 0x240 octets à `0x03BDC980`, lu dans le code décompilé (emplacement 0 l'arbitre, 1–11 équipe 0, 12–22 équipe 1 ; voir `docs/pes6-mod.md`). **Validé le 3 octobre 2026 par Mehdi** (un fanion sur chaque joueur, une couleur par équipe). |
+| M4a | Tommy au bord du terrain | Tommy (modèle et textures de Vice City) dessiné immobile hors du terrain, sur la ligne de touche, dans l'image de PES. |
+| M4b | Animations de Tommy | Tommy joue ses animations de Vice City (repos, course). |
+| M4c | Bascule vers Tommy | Une touche fait passer le joueur sur Tommy : les deux équipes passent sous le contrôle de l'ordinateur (code de PES décompilé), PES ne reçoit plus les commandes du joueur ; la même touche rend l'équipe. |
+| M4d | Intégration | Tommy caché par les joueurs qui passent devant, ombre, taille juste. |
+| M5 | Tirs | Armes de Vice City, sons d'origine ; un joueur touché tombe et sort du jeu. |
+
+**Déroulement voulu (Mehdi, 3 octobre 2026) :** le match commence normalement, le joueur contrôle son équipe et Tommy attend hors du terrain, sur la ligne de touche. Une touche fait passer le joueur sur Tommy : les deux équipes sont alors jouées par l'ordinateur (comme un match ordinateur contre ordinateur de PES), et le joueur peut tirer sur tous les joueurs ; un joueur touché tombe et sort du match. La même touche rend l'équipe au joueur.
+
+### Route « tout en Rust depuis le code décompilé » (décision de Mehdi, 3 octobre 2026)
+
+Mehdi veut finalement **tout dans le moteur Rust** (crate `game`), porté depuis le code décompilé des deux jeux, plutôt qu'un mod du vrai PES. Le mod `pes6-mod` reste, comme **instrument de mesure** : il enregistre ce que fait le vrai PES image par image, et chaque sous-système porté en Rust doit reproduire ces enregistrements. Une partie du code de PES saute dans les sections de SecuROM : on ne contourne pas cette protection, ces parties sont reproduites d'après les enregistrements.
+
+| Jalon | Livrable | Critère de réussite |
+| --- | --- | --- |
+| R1 | Carte des deux exécutables | Toutes les fonctions de PES6.exe et de gta-vc.exe décompilées et exportées hors du dépôt ; sous-systèmes repérés (physique du ballon, déplacement des joueurs, IA, règles, commandes, animations), consignés dans `docs/pes6-code.md` et `docs/vc-code.md`. |
+| R2 | Enregistreur | Le mod enregistre un match réel image par image (ballon, 23 joueurs, commandes) dans un fichier. |
+| R3 | Physique du ballon de PES en Rust | Portée du code décompilé ; rejouée sur les enregistrements, la trajectoire du ballon Rust suit celle du vrai. |
+| R4+ | Joueurs, animations PES, IA, règles, puis Tommy (code de Vice City) | Chaque sous-système validé contre les enregistrements, puis par Mehdi à la manette. |
+
+### Vision longue (Mehdi, 3 octobre 2026), après la route « mod du vrai PES 6 »
+
+- **Le stade PES dans Vice City :** le stade de PES est ajouté à la carte de Vice City comme une extension. Tommy y entre, le menu « Match rapide » de PES s'ouvre (choix des équipes, etc., le déroulement normal de PES), puis le match avec Tommy (route ci-dessus).
+- **Les joueurs PES dans les rues de Vice City :** chaque joueur PES (par exemple Ronaldinho) apparaît dans Vice City sous forme d'image plate (PNG, rendue depuis son modèle PES), et Tommy peut aussi lui tirer dessus en dehors du stade.
+- Vice City a déjà un chargeur ASI installé chez Mehdi : c'est la porte d'entrée côté GTA. Le détail sera planifié une fois M5 validé.
 
 ## Conventions de travail pour Claude Code
 

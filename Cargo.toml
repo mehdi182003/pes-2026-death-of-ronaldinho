@@ -8,6 +8,7 @@ members = [
     "crates/retarget",
     "crates/asset-tools",
     "crates/game",
+    "crates/pes6-mod",
 ]
 
 [workspace.package]
@@ -27,6 +28,7 @@ formats-pes = { path = "crates/formats-pes" }
 asset-bridge = { path = "crates/asset-bridge" }
 bevy-bridge = { path = "crates/bevy-bridge" }
 retarget = { path = "crates/retarget" }
+pes6-mod = { path = "crates/pes6-mod" }
 
 # Engine
 # "wav": plays the Vice City sounds, wrapped in WAV in memory.

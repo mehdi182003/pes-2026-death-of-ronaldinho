@@ -242,9 +242,10 @@ fn models_parse_with_consistent_draws() {
             }
         }
     }
-    // Full game: 9546 read, 101 with an opcode not understood yet.
+    // Full game: 13 747 read (stadiums included), 387 with an opcode not
+    // understood yet.
     eprintln!("modèles : {read} lus, {unknown_opcodes} avec une instruction inconnue");
-    assert!(unknown_opcodes * 50 < read, "{read} / {unknown_opcodes}");
+    assert!(unknown_opcodes * 30 < read, "{read} / {unknown_opcodes}");
 }
 
 #[test]
@@ -508,4 +509,49 @@ fn body_slots_get_their_role_from_the_geometry() {
         other.contains(&(0, Skin)) && other.contains(&(7, Skin)),
         "{other:?}"
     );
+}
+
+#[test]
+fn a_stadium_loads_with_the_textures_its_models_name() {
+    let Some(dir) = game_dir(Game::Pes6) else {
+        return;
+    };
+    let pes = Pes6::open(&dir).unwrap();
+    let (stadium, textures) = pes.load_scenery(&"0_text:6949".parse().unwrap()).unwrap();
+    // 9 + 30 textures (empty slots skipped), 15 models: pitch, lines,
+    // boards, stands, roof.
+    assert_eq!(textures.len(), 39);
+    assert!(
+        stadium.triangle_count() > 5000,
+        "{}",
+        stadium.triangle_count()
+    );
+    let materials: Vec<_> = stadium
+        .meshes
+        .iter()
+        .flat_map(|mesh| &mesh.primitives)
+        .map(|primitive| &primitive.material)
+        .collect();
+    // The grass is opaque, the lines (texture 0/1) are blended over it.
+    let grass = materials
+        .iter()
+        .find(|m| m.texture.as_deref() == Some("0_text:6949/0/0"))
+        .unwrap();
+    let lines = materials
+        .iter()
+        .find(|m| m.texture.as_deref() == Some("0_text:6949/0/1"))
+        .unwrap();
+    assert!(!grass.blend && lines.blend);
+    assert!(lines.layer > grass.layer);
+    // The pitch is 105 m long: the lines end at ±52.5 m.
+    let length = stadium
+        .meshes
+        .iter()
+        .flat_map(|mesh| mesh.primitives.iter().map(move |p| (mesh, p)))
+        .filter(|(_, p)| p.material.texture.as_deref() == Some("0_text:6949/0/1"))
+        .flat_map(|(mesh, p)| p.indices.iter().map(|&i| mesh.positions[i as usize][0]))
+        .fold(0.0f32, |max, x| max.max(x.abs()));
+    // retarget::PES6_STADIUM_UNITS_PER_METRE.
+    let metres = length / 51.3;
+    assert!((metres - 52.5).abs() < 0.2, "{metres}");
 }

@@ -103,6 +103,15 @@ pub struct PesModel {
     pub draws: Vec<Draw>,
     /// Empty for models that do not move with bones (faces, balls...).
     pub bones: Vec<Bone>,
+    /// Texture of each slot (opcode `02` of the draws), by number: the
+    /// table pointed to by the u32 at offset 12 (u16 count, then one u16 per
+    /// slot). A stadium names its textures by the number in their header
+    /// (`texture::TextureHeader::id`): 0x2711 for the lines of 0_text:6949.
+    /// A body has role numbers the game fills in (0x65 skin, 0x68 kit, 0x70
+    /// boots... on body n° 995).
+    // HYPOTHÈSE: the role of each number of the bodies, read from the slots
+    // they go with (see `asset_bridge::pes6::PlayerSlot`).
+    pub texture_ids: Vec<u16>,
     /// Tables of the draw program (opcode `03`): entry `j` is the skeleton
     /// bone of the vertices whose bone number is `j`. Checked on the 573
     /// bodies with 19 bones: one table each, a permutation of the 19 bones,
@@ -274,12 +283,27 @@ pub fn parse(bytes: &[u8]) -> Result<PesModel, ModelError> {
     )?;
     let (draws, bone_tables) = run_program(program, &parts, &strip)?;
     let bones = parse_bones(&file, program_end)?;
+    let texture_ids = parse_texture_ids(&file)?;
     Ok(PesModel {
         parts,
         draws,
         bones,
+        texture_ids,
         bone_tables,
     })
+}
+
+/// The texture table: at the offset given by the u32 at offset 12, a count
+/// (u16) then one u16 per texture slot. An offset of 0 means none.
+fn parse_texture_ids(file: &Bytes) -> Result<Vec<u16>, ModelError> {
+    let at = file.u32(12, "en-tête")?;
+    if at == 0 {
+        return Ok(Vec::new());
+    }
+    let count = usize::from(file.u16(at, "textures")?);
+    (0..count)
+        .map(|slot| file.u16(at + 2 + 2 * slot, "textures"))
+        .collect()
 }
 
 /// The skeleton, right after the draw program: a count (u32), then per bone
@@ -612,6 +636,16 @@ mod tests {
         );
         assert_eq!(model.bone_tables, [vec![7, 8]]);
         assert!(model.bones.is_empty());
+    }
+
+    #[test]
+    fn texture_numbers_come_from_the_table_at_offset_12() {
+        assert!(parse(&tiny_model()).unwrap().texture_ids.is_empty());
+        let mut bytes = tiny_model();
+        let at = bytes.len();
+        bytes.extend([2, 0, 0x11, 0x27, 0x14, 0x27]);
+        bytes[12..16].copy_from_slice(&(at as u32).to_le_bytes());
+        assert_eq!(parse(&bytes).unwrap().texture_ids, [0x2711, 0x2714]);
     }
 
     #[test]

@@ -37,6 +37,18 @@ pub const VICE_CITY_ANIMATION_TO_COMMON: [f32; 4] = [0.0, FRAC_1_SQRT_2, FRAC_1_
 // units) then measures about 21 cm.
 pub const PES6_UNITS_PER_METRE: f32 = 420.0;
 
+/// Units of PES 6 stadiums per metre: the lines of stadium 0_text:6949 are
+/// at their distances of the Laws of the Game from the goal line at 2693
+/// units (52.5 m): penalty area at 1848, goal area at 2412, penalty spot
+/// at 2130, touchline at 1746 (34 m).
+// HYPOTHÈSE: the same for every stadium.
+pub const PES6_STADIUM_UNITS_PER_METRE: f32 = 51.3;
+
+/// Rotation from the space of PES 6 stadiums, Y down (PlayStation 2
+/// convention: the stands go towards -Y), to a Y-up world, as a quaternion
+/// (x, y, z, w): 180° around X. The pitch stays along X.
+pub const PES6_STADIUM_TO_Y_UP: [f32; 4] = [1.0, 0.0, 0.0, 0.0];
+
 /// Bones of a PES 6 body (names of `asset_bridge::pes6::BODY_BONES`) and the
 /// bones of Tommy (`player.dff`) they follow, the root first. The PES "hips"
 /// bone, between the pelvis and the thighs, has no counterpart: it keeps

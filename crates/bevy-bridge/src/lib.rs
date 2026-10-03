@@ -240,10 +240,12 @@ impl<'w, 's> ModelSpawner<'w, 's> {
                     base_color: Color::srgba(r, g, b, a),
                     base_color_texture: texture.map(|(handle, _)| handle.clone()),
                     alpha_mode: match texture {
+                        _ if primitive.material.blend => AlphaMode::Blend,
                         Some((_, false)) => AlphaMode::Mask(0.5),
                         _ => AlphaMode::Opaque,
                     },
                     perceptual_roughness: 0.8,
+                    depth_bias: f32::from(primitive.material.layer),
                     unlit: options.unlit,
                     cull_mode: if options.double_sided {
                         None
@@ -325,6 +327,8 @@ pub struct AnimationLayer {
     /// Seconds into the animation.
     pub time: f32,
     pub paused: bool,
+    /// Playback speed: 1 plays the animation at its own pace.
+    pub rate: f32,
     /// While set, the time loops between these two instants; otherwise the
     /// layer plays to the end and is then removed.
     pub loop_range: Option<(f32, f32)>,
@@ -355,6 +359,7 @@ impl AnimationLayer {
             root_drift,
             time: 0.0,
             paused: false,
+            rate: 1.0,
             loop_range: None,
         }
     }
@@ -377,7 +382,7 @@ impl AnimationLayer {
         if self.paused {
             return;
         }
-        self.time += delta;
+        self.time += delta * self.rate;
         if let Some((start, end)) = self.loop_range
             && self.time >= end
         {

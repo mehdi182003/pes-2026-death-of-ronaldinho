@@ -72,7 +72,7 @@ Après décompression, la plupart des fichiers de type 6 sont des conteneurs :
 | 4 | u32 | position de la table : toujours 8 |
 | 8 | *n* × u32 | position de chaque sous-fichier, croissante |
 
-Un sous-fichier finit là où commence le suivant, le dernier à la fin des données. Les positions sont alignées sur 16 octets. Un sous-fichier peut être lui-même compressé (même en-tête de 32 octets) ou un autre conteneur. `0_text.afs` contient 7703 conteneurs.
+Un sous-fichier finit là où commence le suivant, le dernier à la fin des données. Les positions sont alignées sur 16 octets. **Une position nulle est un emplacement vide** : il garde son numéro, et les autres sous-fichiers finissent au début du suivant non vide. Les conteneurs des stades en ont beaucoup (voir [pes-stadium.md](pes-stadium.md)). Un sous-fichier peut être lui-même compressé (même en-tête de 32 octets) ou un autre conteneur. `0_text.afs` contient 7703 conteneurs.
 
 ## Contenus reconnus
 
@@ -119,6 +119,7 @@ Numéros à partir de 0, tirés de la carte communautaire (`asset_bridge::pes6::
 | 6872 – 6912 | sons | 34 sons ADX et 7 fichiers inconnus |
 | 6913 – 6914 | foule | 2 conteneurs de textures |
 | 6915 – 6939 | panneaux publicitaires | conteneurs de textures et de données |
+| 6940 – … | stades (hors carte) | groupes de 11 fichiers : tribunes en niveaux de détail et stade complet (voir [pes-stadium.md](pes-stadium.md)) |
 
 Hors carte, les fichiers n° 1193 à 1890 sont chiffrés, et de nombreux fichiers restent à situer (corps de joueurs vers les n° 1060, ensembles d'entraînement vers les n° 288 à 297...).
 

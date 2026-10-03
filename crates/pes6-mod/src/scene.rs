@@ -1,0 +1,375 @@
+//! Finds PES's 3D camera in a frame.
+//!
+//! PES 6 uses the fixed pipeline: it sets `D3DTS_VIEW` and `D3DTS_PROJECTION`
+//! with `SetTransform` (seen in the M2a log), but a frame can use several
+//! cameras (the pitch, then the score and radar in 2D). The camera that draws
+//! the most primitives is taken as the one of the pitch. Within it, draws are
+//! grouped by WORLD matrix: one group per object placed in the world (M3).
+
+use std::collections::BTreeMap;
+
+pub type Matrix = [f32; 16];
+
+pub const IDENTITY: Matrix = [
+    1.0, 0.0, 0.0, 0.0, //
+    0.0, 1.0, 0.0, 0.0, //
+    0.0, 0.0, 1.0, 0.0, //
+    0.0, 0.0, 0.0, 1.0,
+];
+
+/// A camera used in the frame, with the number of primitives drawn through it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Camera {
+    pub view: Matrix,
+    pub projection: Matrix,
+    pub primitives: u64,
+}
+
+/// Everything drawn with one WORLD matrix through the main camera: one
+/// object placed in the world (or several sharing a placement).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Object {
+    pub world: Matrix,
+    pub primitives: u64,
+    pub draws: u32,
+}
+
+impl Object {
+    /// Translation of the WORLD matrix (row-vector convention: last row).
+    pub fn position(&self) -> [f32; 3] {
+        [self.world[12], self.world[13], self.world[14]]
+    }
+}
+
+/// What a frame drew.
+#[derive(Debug, Default, PartialEq)]
+pub struct FrameSummary {
+    /// The camera that drew the most primitives.
+    pub main: Option<Camera>,
+    /// Number of distinct cameras.
+    pub cameras: usize,
+    /// Objects drawn through the main camera, most primitives first.
+    pub objects: Vec<Object>,
+    /// `SetTransform` calls on `D3DTS_WORLDMATRIX(1..)`: vertex blending.
+    pub blend_matrices: u32,
+}
+
+impl Object {
+    /// Length of the first row: the scale of the X axis.
+    pub fn scale(&self) -> f32 {
+        let w = &self.world;
+        (w[0] * w[0] + w[1] * w[1] + w[2] * w[2]).sqrt()
+    }
+}
+
+// HYPOTHÈSE: PES draws its players and ball from "logic" coordinates (the
+// ones stored in memory, 256.5 units per metre) through one WORLD matrix of
+// scale 0.2 at the origin; the pitch and stadium are drawn with the identity.
+// Seen in the M3 logs: in match, exactly these two WORLD matrices; the ball
+// in memory × 0.2 lands where the camera looks.
+const LOGIC_SCALE_RANGE: std::ops::RangeInclusive<f32> = 0.1..=0.5;
+
+impl FrameSummary {
+    /// The WORLD matrix PES uses for objects in logic coordinates: the
+    /// biggest non-identity object of scale about 0.2 placed at the origin.
+    pub fn logic_world(&self) -> Option<Matrix> {
+        self.objects
+            .iter()
+            .filter(|o| o.world != IDENTITY)
+            .filter(|o| o.position().iter().all(|v| v.abs() < 1.0))
+            .filter(|o| LOGIC_SCALE_RANGE.contains(&o.scale()))
+            .max_by_key(|o| o.primitives)
+            .map(|o| o.world)
+    }
+}
+
+/// Bit pattern of a matrix, usable as a map key.
+fn key(m: &Matrix) -> [u32; 16] {
+    m.map(f32::to_bits)
+}
+
+/// Cameras and objects of the frame being drawn.
+#[derive(Debug, Default)]
+pub struct FrameCameras {
+    view: Option<Matrix>,
+    projection: Option<Matrix>,
+    world: Matrix,
+    cameras: Vec<Camera>,
+    /// (camera index, WORLD bits) → object.
+    objects: BTreeMap<(usize, [u32; 16]), Object>,
+    blend_matrices: u32,
+}
+
+impl FrameCameras {
+    pub const fn new() -> Self {
+        Self {
+            view: None,
+            projection: None,
+            world: IDENTITY,
+            cameras: Vec::new(),
+            objects: BTreeMap::new(),
+            blend_matrices: 0,
+        }
+    }
+
+    pub fn set_view(&mut self, view: Matrix) {
+        self.view = Some(view);
+    }
+
+    pub fn set_projection(&mut self, projection: Matrix) {
+        self.projection = Some(projection);
+    }
+
+    /// `D3DTS_WORLDMATRIX(index)`.
+    pub fn set_world(&mut self, index: u32, world: Matrix) {
+        if index == 0 {
+            self.world = world;
+        } else {
+            self.blend_matrices += 1;
+        }
+    }
+
+    /// Counts primitives drawn with the current camera and WORLD matrix.
+    /// Draws made before both camera matrices are known are ignored.
+    pub fn draw(&mut self, primitives: u32) {
+        let (Some(view), Some(projection)) = (self.view, self.projection) else {
+            return;
+        };
+        let primitives = u64::from(primitives);
+        let index = match self
+            .cameras
+            .iter()
+            .position(|c| c.view == view && c.projection == projection)
+        {
+            Some(index) => {
+                self.cameras[index].primitives += primitives;
+                index
+            }
+            None => {
+                self.cameras.push(Camera {
+                    view,
+                    projection,
+                    primitives,
+                });
+                self.cameras.len() - 1
+            }
+        };
+        let object = self
+            .objects
+            .entry((index, key(&self.world)))
+            .or_insert(Object {
+                world: self.world,
+                primitives: 0,
+                draws: 0,
+            });
+        object.primitives += primitives;
+        object.draws += 1;
+    }
+
+    /// The camera set right now, with the primitives drawn through it so far
+    /// in this frame.
+    pub fn current(&self) -> Option<Camera> {
+        let (view, projection) = (self.view?, self.projection?);
+        let primitives = self
+            .cameras
+            .iter()
+            .find(|c| c.view == view && c.projection == projection)
+            .map_or(0, |c| c.primitives);
+        Some(Camera {
+            view,
+            projection,
+            primitives,
+        })
+    }
+
+    /// Ends the frame. The current matrices stay set, as on the device.
+    pub fn finish(&mut self) -> FrameSummary {
+        let cameras = self.cameras.len();
+        let main_index = self
+            .cameras
+            .iter()
+            .enumerate()
+            .max_by_key(|(_, c)| c.primitives)
+            .map(|(i, _)| i);
+        let main = main_index.map(|i| self.cameras[i]);
+        let mut objects: Vec<Object> = std::mem::take(&mut self.objects)
+            .into_iter()
+            .filter(|((camera, _), _)| Some(*camera) == main_index)
+            .map(|(_, object)| object)
+            .collect();
+        objects.sort_by_key(|o| std::cmp::Reverse(o.primitives));
+        self.cameras.clear();
+        FrameSummary {
+            main,
+            cameras,
+            objects,
+            blend_matrices: std::mem::take(&mut self.blend_matrices),
+        }
+    }
+}
+
+/// Row-vector product used by Direct3D: `a` then `b`.
+pub fn multiply(a: &Matrix, b: &Matrix) -> Matrix {
+    let mut out = [0.0; 16];
+    for row in 0..4 {
+        for col in 0..4 {
+            out[row * 4 + col] = (0..4).map(|k| a[row * 4 + k] * b[k * 4 + col]).sum();
+        }
+    }
+    out
+}
+
+/// Projects a world point to normalised device coordinates (x, y in -1..1,
+/// z in 0..1), or `None` behind the camera.
+pub fn project(point: [f32; 3], view: &Matrix, projection: &Matrix) -> Option<[f32; 3]> {
+    let m = multiply(view, projection);
+    let [x, y, z] = point;
+    let clip: Vec<f32> = (0..4)
+        .map(|col| x * m[col] + y * m[4 + col] + z * m[8 + col] + m[12 + col])
+        .collect();
+    (clip[3] > 0.0).then(|| [clip[0] / clip[3], clip[1] / clip[3], clip[2] / clip[3]])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The view and projection logged by PES 6 in M2a.
+    const PES_VIEW: Matrix = [
+        -0.99999994,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.4472136,
+        0.89442724,
+        0.0,
+        0.0,
+        0.8944272,
+        -0.44721362,
+        0.0,
+        0.0,
+        0.0,
+        2236.068,
+        1.0,
+    ];
+    const PES_PROJECTION: Matrix = [
+        5.5859375, 0.0, 0.0, 0.0, 0.0, -7.447917, 0.0, 0.0, 0.0, 0.0, 1.0031348, 1.0, 0.0, 0.0,
+        -50.15674, 0.0,
+    ];
+
+    fn translation(x: f32, y: f32, z: f32) -> Matrix {
+        let mut m = IDENTITY;
+        m[12..15].copy_from_slice(&[x, y, z]);
+        m
+    }
+
+    #[test]
+    fn the_busiest_camera_wins() {
+        let mut frame = FrameCameras::default();
+        frame.draw(100); // before any matrix: ignored
+        frame.set_projection(PES_PROJECTION);
+        frame.set_view(PES_VIEW);
+        frame.draw(500);
+        frame.draw(300);
+        frame.set_view(IDENTITY); // 2D overlay
+        frame.draw(50);
+        let summary = frame.finish();
+        assert_eq!(summary.cameras, 2);
+        let main = summary.main.unwrap();
+        assert_eq!(main.view, PES_VIEW);
+        assert_eq!(main.primitives, 800);
+    }
+
+    #[test]
+    fn objects_are_grouped_by_world_matrix_of_the_main_camera() {
+        let mut frame = FrameCameras::default();
+        frame.set_projection(PES_PROJECTION);
+        frame.set_view(PES_VIEW);
+        frame.set_world(0, translation(1.0, 2.0, 3.0));
+        frame.draw(40);
+        frame.draw(10);
+        frame.set_world(0, translation(-5.0, 0.0, 9.0));
+        frame.draw(80);
+        frame.set_world(2, IDENTITY); // blend matrix
+        frame.set_view(IDENTITY); // another, smaller camera
+        frame.draw(5);
+        let summary = frame.finish();
+        assert_eq!(summary.blend_matrices, 1);
+        assert_eq!(summary.objects.len(), 2);
+        assert_eq!(summary.objects[0].position(), [-5.0, 0.0, 9.0]);
+        assert_eq!(summary.objects[0].primitives, 80);
+        assert_eq!(summary.objects[1].position(), [1.0, 2.0, 3.0]);
+        assert_eq!(
+            (summary.objects[1].primitives, summary.objects[1].draws),
+            (50, 2)
+        );
+    }
+
+    #[test]
+    fn finds_the_logic_world_matrix() {
+        let mut logic = IDENTITY;
+        logic[0] = -0.2;
+        logic[5] = 0.2;
+        logic[10] = 0.2;
+        let mut frame = FrameCameras::default();
+        frame.set_projection(PES_PROJECTION);
+        frame.set_view(PES_VIEW);
+        frame.draw(10_000); // pitch, identity
+        frame.set_world(0, logic);
+        frame.draw(900);
+        frame.set_world(0, translation(2451.7, -395.3, -4236.9)); // replay object, elsewhere
+        frame.draw(984);
+        assert_eq!(frame.finish().logic_world(), Some(logic));
+    }
+
+    #[test]
+    fn no_logic_world_in_menus() {
+        let mut frame = FrameCameras::default();
+        frame.set_projection(PES_PROJECTION);
+        frame.set_view(PES_VIEW);
+        frame.draw(10);
+        assert_eq!(frame.finish().logic_world(), None);
+    }
+
+    #[test]
+    fn current_camera_counts_its_primitives_so_far() {
+        let mut frame = FrameCameras::default();
+        assert_eq!(frame.current(), None);
+        frame.set_projection(PES_PROJECTION);
+        frame.set_view(PES_VIEW);
+        assert_eq!(frame.current().unwrap().primitives, 0);
+        frame.draw(700);
+        frame.set_view(IDENTITY);
+        frame.draw(5);
+        frame.set_view(PES_VIEW);
+        let current = frame.current().unwrap();
+        assert_eq!((current.view, current.primitives), (PES_VIEW, 700));
+    }
+
+    #[test]
+    fn finish_starts_a_new_frame_with_the_same_matrices() {
+        let mut frame = FrameCameras::default();
+        frame.set_view(PES_VIEW);
+        frame.set_projection(PES_PROJECTION);
+        frame.draw(10);
+        frame.finish();
+        assert_eq!(frame.finish(), FrameSummary::default());
+        frame.draw(5);
+        assert_eq!(frame.finish().main.unwrap().primitives, 5);
+    }
+
+    #[test]
+    fn identity_is_neutral() {
+        assert_eq!(multiply(&PES_VIEW, &IDENTITY), PES_VIEW);
+        assert_eq!(multiply(&IDENTITY, &PES_VIEW), PES_VIEW);
+    }
+
+    #[test]
+    fn the_world_origin_is_in_front_of_the_pes_camera() {
+        // The camera of the M2a log looks at the origin from 2236 units away.
+        let ndc = project([0.0, 0.0, 0.0], &PES_VIEW, &PES_PROJECTION).unwrap();
+        assert!(ndc[0].abs() < 1e-3 && ndc[1].abs() < 1e-3, "{ndc:?}");
+        assert!((0.0..1.0).contains(&ndc[2]), "{ndc:?}");
+    }
+}

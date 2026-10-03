@@ -15,4 +15,5 @@ bevy-bridge.workspace = true
 clap.workspace = true
 formats-pes.workspace = true
 formats-rw.workspace = true
+pes6-mod.workspace = true
 retarget.workspace = true

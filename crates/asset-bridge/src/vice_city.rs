@@ -321,6 +321,8 @@ pub fn model_from_clump(name: &str, clump: &Clump) -> Result<Model, String> {
                 material: Material {
                     base_color: material.color.map(|c| f32::from(c) / 255.0),
                     texture: material.texture.as_ref().map(|t| t.name.clone()),
+                    blend: false,
+                    layer: 0,
                 },
                 indices,
             })

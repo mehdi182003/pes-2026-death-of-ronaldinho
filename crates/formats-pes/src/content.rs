@@ -248,6 +248,10 @@ fn is_adx(data: &[u8]) -> bool {
 /// always 8), then one u32 offset per sub-file, in increasing order. A
 /// sub-file ends where the next one starts, the last one at the end of the
 /// data. 7703 of the 7713 readable files of kind 6 of `0_text.afs` match.
+///
+/// An offset of 0 is an empty slot: it keeps its position, and the other
+/// sub-files end where the next non-empty one starts. Stadium containers
+/// (0_text:6949 and the like) have many.
 pub fn parse_container(data: &[u8]) -> Option<Vec<Range<usize>>> {
     let u32_at = |at: usize| {
         data.get(at..at + 4)
@@ -261,16 +265,22 @@ pub fn parse_container(data: &[u8]) -> Option<Vec<Range<usize>>> {
     let offsets = (0..count)
         .map(|index| u32_at(8 + 4 * index))
         .collect::<Option<Vec<usize>>>()?;
-    let ordered = offsets.windows(2).all(|pair| pair[0] <= pair[1]);
-    if offsets[0] < table_end || !ordered || offsets[count - 1] > data.len() {
+    let used: Vec<usize> = offsets.iter().copied().filter(|&o| o != 0).collect();
+    let ordered = used.windows(2).all(|pair| pair[0] <= pair[1]);
+    let (Some(&first), Some(&last)) = (used.first(), used.last()) else {
+        return None;
+    };
+    if first < table_end || !ordered || last > data.len() {
         return None;
     }
-    let ends = offsets.iter().skip(1).copied().chain([data.len()]);
+    let mut next = used.iter().skip(1).copied().chain([data.len()]);
     Some(
         offsets
             .iter()
-            .zip(ends)
-            .map(|(&start, end)| start..end)
+            .map(|&start| match start {
+                0 => table_end..table_end,
+                _ => start..next.next().unwrap_or(data.len()),
+            })
             .collect(),
     )
 }
@@ -344,9 +354,16 @@ mod tests {
         backwards[12..16].copy_from_slice(&2u32.to_le_bytes());
         assert_eq!(parse_container(&backwards), None);
         // Offset past the end.
-        let mut past = data;
+        let mut past = data.clone();
         past[16..20].copy_from_slice(&99u32.to_le_bytes());
         assert_eq!(parse_container(&past), None);
+        // Empty slots (offset 0) keep their position.
+        let mut gaps = data;
+        gaps[12..16].copy_from_slice(&0u32.to_le_bytes());
+        assert_eq!(parse_container(&gaps).unwrap(), [20..23, 20..20, 23..27]);
+        let mut empty = container(&[b"ab"]);
+        empty[8..12].copy_from_slice(&0u32.to_le_bytes());
+        assert_eq!(parse_container(&empty), None);
     }
 
     #[test]

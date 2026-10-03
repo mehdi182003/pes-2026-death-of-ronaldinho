@@ -107,6 +107,13 @@ pub struct Material {
     pub base_color: [f32; 4],
     /// Name of the texture in the game's texture dictionary.
     pub texture: Option<String>,
+    /// Blended with what is behind by the alpha of the texture (painted
+    /// lines, shadows); otherwise an alpha below one half is cut out.
+    pub blend: bool,
+    /// Drawing order among surfaces that lie on one another (the layers
+    /// of a pitch: grass, mowing, lines, shadows): a higher layer is drawn
+    /// over a lower one. 0 for ordinary models.
+    pub layer: u16,
 }
 
 #[derive(Debug, Clone, PartialEq)]

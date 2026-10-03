@@ -4,12 +4,10 @@ Le brief de référence est [`docs/BRIEF.md`](docs/BRIEF.md). **Le relire avant 
 
 ## Règles non négociables (légal)
 
-1. **Aucun asset dans le dépôt.** Rien qui provienne de GTA Vice City ou de PES (modèles, textures, animations, sons, fichiers extraits, dumps) ne doit être commité. Le `.gitignore` bloque les extensions concernées et la CI échoue si l'une d'elles est suivie par Git.
+1. **Aucun asset dans le dépôt.** Rien qui provienne de GTA Vice City ou de PES (modèles, textures, animations, sons, fichiers extraits, dumps, sorties de décompilation) ne doit être commité. Le `.gitignore` bloque les extensions concernées et la CI échoue si l'une d'elles est suivie par Git.
 2. **Chemins configurables.** Les jeux sont lus depuis les installations du joueur, déclarées dans `config.toml` (non versionné ; modèle : `config.example.toml`). Sans chemins valides, le jeu refuse de démarrer avec un message clair.
-3. **Pas de code d'origine.** Interdiction d'utiliser ou de s'inspirer ligne à ligne de reVC, re3, ou du code source de GTA V qui a fuité.
-4. **Pas de décompilation des exécutables.** Le comportement des jeux est reproduit par observation. La documentation publique des formats est autorisée.
-5. **Références open source autorisées** pour comprendre les formats (wiki GTAMods, librw, OpenRW, outils de modding PES), en respectant leurs licences.
-6. **Tests sans assets commités.** Les tests qui lisent de vrais fichiers sont ignorés automatiquement si les chemins des jeux ne sont pas configurés.
+3. **Références open source autorisées** pour comprendre les formats (wiki GTAMods, librw, OpenRW, outils de modding PES), en respectant leurs licences.
+4. **Tests sans assets commités.** Les tests qui lisent de vrais fichiers sont ignorés automatiquement si les chemins des jeux ne sont pas configurés.
 
 ## Conventions de travail
 
@@ -28,7 +26,9 @@ Le brief de référence est [`docs/BRIEF.md`](docs/BRIEF.md). **Le relire avant 
 cargo fmt --all
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
-cargo run -p game                               # lance le jeu (lit ./config.toml) : scène de tir de J3
+cargo run -p game                               # lance le match (lit ./config.toml), dans le stade de PES
+cargo run -p game -- tir                        # scène de tir de J3
+cargo run -p asset-tools --bin viewer -- --pes-scenery 0_text:6949 --yaw 0 --zoom 0.22 --look-at 0,0,0   # stade de PES 6
 cargo run -p asset-tools -- check-config        # vérifie les chemins sans compiler Bevy
 cargo run -p asset-tools -- img list --filter player   # contenu de models/gta3.img de Vice City
 cargo run -p asset-tools -- dump vc:player.dff       # dump annoté d'un fichier RenderWare
@@ -40,6 +40,8 @@ cargo run -p asset-tools --bin viewer -- player --anim run_player   # animation 
 cargo run -p asset-tools --bin viewer -- player --anim run_player --pes 0_text:1010 --pes-texture 0_text:419 --pes-boots 0_text:5322/0/0 --pes-head 0_text:1943 --pes-hair 0_text:4570   # même animation sur Tommy et sur le joueur PES
 cargo run -p asset-tools --bin viewer -- --textures vc:player.txd     # textures d'un TXD à plat
 cargo run -p asset-tools -- sfx export 50        # son n° 50 en WAV dans le dossier de cache
+cargo build -p pes6-mod --release --target i686-pc-windows-msvc   # mod du vrai PES 6 (dinput8.dll 32 bits)
+cargo run -p asset-tools -- mod install          # pose le mod à côté de PES6.exe (mod uninstall pour le retirer)
 ```
 
 La variable d'environnement `CHAOS_FC_CONFIG` permet d'utiliser un autre fichier de configuration que `./config.toml`.
