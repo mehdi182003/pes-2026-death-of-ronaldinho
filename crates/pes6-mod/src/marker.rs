@@ -121,12 +121,18 @@ pub fn pin(at: [f32; 3], units_per_metre: f32) -> Vec<WorldVertex> {
     out
 }
 
-/// Player flag colour.
-pub const FLAG_COLOR: u32 = 0xff_20_e0_e0;
+/// Player flag colours: team 0 cyan, team 1 orange, anything else white.
+pub fn team_color(team: u8) -> u32 {
+    match team {
+        0 => 0xff_20_e0_e0,
+        1 => 0xff_ff_90_20,
+        _ => 0xff_ff_ff_ff,
+    }
+}
 
 /// A thin pole from 2 m to 3 m above `at`, on the up side of a Y-down world:
 /// floats over a player's head without hiding him.
-pub fn flag(at: [f32; 3], units_per_metre: f32) -> Vec<WorldVertex> {
+pub fn flag(at: [f32; 3], units_per_metre: f32, color: u32) -> Vec<WorldVertex> {
     let m = units_per_metre;
     let h = 0.06 * m;
     let [x, y, z] = at;
@@ -136,7 +142,7 @@ pub fn flag(at: [f32; 3], units_per_metre: f32) -> Vec<WorldVertex> {
         &mut out,
         [x - h, low.min(high), z - h],
         [x + h, low.max(high), z + h],
-        FLAG_COLOR,
+        color,
     );
     out
 }
@@ -170,7 +176,7 @@ mod tests {
 
     #[test]
     fn flag_floats_above_the_player() {
-        let f = flag([0.0, 0.0, 0.0], 100.0);
+        let f = flag([0.0, 0.0, 0.0], 100.0, team_color(0));
         assert_eq!(f.len(), 36);
         // Y down: above means negative Y, between 2 m and 3 m.
         assert!(f.iter().all(|v| (-300.0..=-200.0).contains(&v.y)));

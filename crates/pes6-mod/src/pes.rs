@@ -1,30 +1,37 @@
 //! What is known of PES 6's memory (retail Win32 PES6.exe, the build of
-//! Mehdi's install), and the portable logic that searches it.
+//! Mehdi's install). Every layout comes from the decompiled code (Ghidra,
+//! project `~/pes6-decomp`), cited by function; see `docs/pes6-mod.md`.
 //!
-//! Source of the ball and player offsets: the open-source PES 6 physics mod
-//! by angelballay (https://mintlify.wiki/angelballay/pes6_game_physics_mod,
-//! reference/pes-addresses). Checked on this PES6.exe in M3: the stock ball
-//! mass 188.0 at 0xB8AE70, and its two documented call sites
-//! (0x1A5905 → 0x1A1570, 0x1A6381 → 0x78020) are byte for byte there.
+//! The ball pointer was first published by the open-source PES 6 physics
+//! mod by angelballay (https://mintlify.wiki/angelballay/pes6_game_physics_mod),
+//! and is used the same way by the decompiled code below.
 
-/// RVA of the global pointer to the ball struct.
+/// Base address PES6.exe is linked at (no relocations: it always loads there).
+pub const IMAGE_BASE: usize = 0x40_0000;
+
+/// RVA of the global pointer to the ball struct (`PTR_DAT_00bcce94` in
+/// FUN_005a2a7b and FUN_00478020).
 pub const BALL_GLOBAL_PTR_RVA: usize = 0x7C_CE94;
 /// Ball struct: world position, three floats (X, Y = height, Z).
 pub const BALL_POSITION: usize = 0x20;
 
-/// Player struct: "logic" position, three floats (X, Y, Z).
+/// The player array (`DAT_03bdc980`): FUN_005a2a7b takes player `i` at
+/// `0x03bdc980 + i * 0x240`, with `i` modulo `0x17`.
+pub const PLAYERS_RVA: usize = 0x03BD_C980 - IMAGE_BASE;
+pub const PLAYER_STRIDE: usize = 0x240;
+pub const PLAYER_SLOTS: usize = 0x17;
+/// Player struct: identifier byte (`*param_1` in FUN_00478020).
+pub const PLAYER_ID: usize = 0x00;
+/// Player struct: number within the team, indexes the stats table
+/// `0x03bcf5a8 + (team * 0x20 + number) * 0x348` (FUN_005a2a7b).
+pub const PLAYER_NUMBER: usize = 0x11;
+/// Player struct: team, 0 or 1 (`param_1[0x12]` and its `^ 1` in FUN_00478020).
+pub const PLAYER_TEAM: usize = 0x12;
+/// Player struct: position, three floats X, Y, Z (copied by FUN_00478020;
+/// X and Z read as `DAT_03bdca60` / `DAT_03bdca68` in FUN_005a2a7b).
 pub const PLAYER_POSITION: usize = 0xE0;
-/// Player struct: pointer to the player's physics struct.
-pub const PLAYER_PHYSICS_PTR: usize = 0xD0;
-/// Player struct: discrete cell of the pitch grid (X, then Y/Z), one byte each.
-pub const PLAYER_CELL: usize = 0x204;
-/// Player struct: "raw ball-distance value" (documented without its form).
-pub const PLAYER_BALL_DISTANCE: usize = 0x114;
-/// Bytes of a player struct read by [`looks_like_player`].
-pub const PLAYER_PROBE_LEN: usize = PLAYER_CELL + 2;
-
-/// Players on the pitch in a match.
-pub const PLAYERS: usize = 22;
+/// Bytes of a player struct read by [`Player::parse`].
+pub const PLAYER_READ_LEN: usize = PLAYER_POSITION + 12;
 
 /// Logic coordinates (ball and players in memory): 5 times the render
 /// world's 51.3 units per metre (M3 log: the ball at rest is at Y = −28,
@@ -34,12 +41,9 @@ pub const LOGIC_UNITS_PER_METRE: f32 = 256.5;
 
 // HYPOTHÈSE: bounds of a logic position on or near the pitch: a 105 m × 68 m
 // pitch is about ±13 500 × ±8 700 units; the margin covers the run-off area.
-// The M3 log saw the ball up to 5 860 units from the centre line.
 pub const PITCH_HALF_EXTENT: f32 = 18_000.0;
 /// Highest ball, about 40 m.
 pub const MAX_HEIGHT: f32 = 10_000.0;
-/// Players stay within about 3 m of the ground (jumps, headers).
-pub const PLAYER_MAX_HEIGHT: f32 = 800.0;
 
 /// True when the three floats can be a position on or above the pitch.
 pub fn plausible_position([x, y, z]: [f32; 3]) -> bool {
@@ -47,229 +51,79 @@ pub fn plausible_position([x, y, z]: [f32; 3]) -> bool {
         && x.abs() <= PITCH_HALF_EXTENT
         && z.abs() <= PITCH_HALF_EXTENT
         && y.abs() <= MAX_HEIGHT
-        // An all-zero block is far more often unused memory than a player
-        // standing exactly on the centre spot.
-        && (x, y, z) != (0.0, 0.0, 0.0)
 }
 
-fn f32_at(bytes: &[u8], at: usize) -> f32 {
-    f32::from_le_bytes(bytes[at..at + 4].try_into().unwrap())
+/// RVA of player slot `index`.
+pub fn player_rva(index: usize) -> usize {
+    PLAYERS_RVA + index * PLAYER_STRIDE
 }
 
-fn u32_at(bytes: &[u8], at: usize) -> u32 {
-    u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap())
+/// The fields of a player struct the mod uses.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Player {
+    pub slot: usize,
+    pub id: u8,
+    pub team: u8,
+    pub number: u8,
+    pub position: [f32; 3],
 }
 
-/// Position stored in a player struct.
-pub fn player_position(bytes: &[u8]) -> [f32; 3] {
-    [0, 4, 8].map(|o| f32_at(bytes, PLAYER_POSITION + o))
-}
-
-/// Cheap structural test of a candidate player struct (the first
-/// [`PLAYER_PROBE_LEN`] bytes): a plausible position and a physics pointer
-/// that looks like a user-mode address. The pointer itself is checked by the
-/// caller, which can query the memory.
-pub fn looks_like_player(bytes: &[u8]) -> bool {
-    if bytes.len() < PLAYER_PROBE_LEN {
-        return false;
+impl Player {
+    /// Reads the first [`PLAYER_READ_LEN`] bytes of slot `slot`.
+    pub fn parse(slot: usize, bytes: &[u8]) -> Option<Self> {
+        let bytes = bytes.get(..PLAYER_READ_LEN)?;
+        let f = |at: usize| f32::from_le_bytes(bytes[at..at + 4].try_into().unwrap());
+        Some(Self {
+            slot,
+            id: bytes[PLAYER_ID],
+            team: bytes[PLAYER_TEAM],
+            number: bytes[PLAYER_NUMBER],
+            position: [
+                f(PLAYER_POSITION),
+                f(PLAYER_POSITION + 4),
+                f(PLAYER_POSITION + 8),
+            ],
+        })
     }
-    let physics = u32_at(bytes, PLAYER_PHYSICS_PTR);
-    let position = player_position(bytes);
-    plausible_position(position)
-        && position[1].abs() <= PLAYER_MAX_HEIGHT
-        && (0x1_0000..0x8000_0000).contains(&physics)
-        && physics.is_multiple_of(4)
-}
-
-/// How a stored ball distance relates to the two positions.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum DistanceForm {
-    /// Distance in 3D.
-    Xyz,
-    /// Distance on the ground (X, Z).
-    Xz,
-    /// Squared distance in 3D.
-    XyzSquared,
-    /// Squared distance on the ground.
-    XzSquared,
-}
-
-impl DistanceForm {
-    pub const ALL: [Self; 4] = [Self::Xyz, Self::Xz, Self::XyzSquared, Self::XzSquared];
-
-    pub fn of(self, a: [f32; 3], b: [f32; 3]) -> f32 {
-        let [dx, dy, dz] = [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
-        let xz = dx * dx + dz * dz;
-        match self {
-            Self::Xyz => (xz + dy * dy).sqrt(),
-            Self::Xz => xz.sqrt(),
-            Self::XyzSquared => xz + dy * dy,
-            Self::XzSquared => xz,
-        }
-    }
-}
-
-// HYPOTHÈSE: the ball moves between PES's last update of the stored
-// distance and our read of the ball: accept 5 % or half a metre.
-const DISTANCE_TOLERANCE: f32 = 0.05;
-const DISTANCE_SLACK: f32 = LOGIC_UNITS_PER_METRE / 2.0;
-
-/// Which form of distance to `ball` the struct stores at
-/// [`PLAYER_BALL_DISTANCE`], if any: the signature of a real player.
-pub fn ball_distance_form(bytes: &[u8], ball: [f32; 3]) -> Option<DistanceForm> {
-    if bytes.len() < PLAYER_PROBE_LEN {
-        return None;
-    }
-    let stored = f32_at(bytes, PLAYER_BALL_DISTANCE);
-    if !stored.is_finite() || stored <= 0.0 {
-        return None;
-    }
-    let position = player_position(bytes);
-    DistanceForm::ALL.into_iter().find(|form| {
-        let expected = form.of(position, ball);
-        let slack = match form {
-            DistanceForm::Xyz | DistanceForm::Xz => DISTANCE_SLACK,
-            // A slack of s on a distance d is about 2·d·s on its square.
-            DistanceForm::XyzSquared | DistanceForm::XzSquared => {
-                2.0 * expected.sqrt() * DISTANCE_SLACK
-            }
-        };
-        (stored - expected).abs() <= expected * DISTANCE_TOLERANCE + slack
-    })
-}
-
-/// Candidates found at a constant spacing: likely an array of structs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Run {
-    pub start: usize,
-    pub stride: usize,
-    pub count: usize,
-}
-
-/// Finds arithmetic runs among sorted candidate addresses: for each
-/// candidate and each stride up to `max_stride`, how many candidates follow
-/// at that spacing. Returns the runs of at least `min_count`, longest first,
-/// without runs contained in a longer one.
-pub fn find_runs(candidates: &[usize], max_stride: usize, min_count: usize) -> Vec<Run> {
-    use std::collections::BTreeSet;
-    let set: BTreeSet<usize> = candidates.iter().copied().collect();
-    let mut runs = Vec::new();
-    for (i, &start) in candidates.iter().enumerate() {
-        for &next in &candidates[i + 1..] {
-            let stride = next - start;
-            if stride > max_stride {
-                break;
-            }
-            // Only start a run at its first element.
-            if start
-                .checked_sub(stride)
-                .is_some_and(|prev| set.contains(&prev))
-            {
-                continue;
-            }
-            let count = (0..)
-                .take_while(|k| set.contains(&(start + k * stride)))
-                .count();
-            if count >= min_count {
-                runs.push(Run {
-                    start,
-                    stride,
-                    count,
-                });
-            }
-        }
-    }
-    runs.sort_by_key(|r| (std::cmp::Reverse(r.count), r.stride));
-    // Drop runs whose elements are all part of a longer, already kept run.
-    let mut kept: Vec<Run> = Vec::new();
-    for run in runs {
-        let covered = kept.iter().any(|k| {
-            run.stride.is_multiple_of(k.stride)
-                && run.start >= k.start
-                && (run.start - k.start).is_multiple_of(k.stride)
-                && run.start + (run.count - 1) * run.stride <= k.start + (k.count - 1) * k.stride
-        });
-        if !covered {
-            kept.push(run);
-        }
-    }
-    kept
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn player(x: f32, y: f32, z: f32, physics: u32) -> Vec<u8> {
-        let mut bytes = vec![0u8; PLAYER_PROBE_LEN];
-        for (i, v) in [x, y, z].iter().enumerate() {
+    #[test]
+    fn slots_match_the_decompiled_addresses() {
+        assert_eq!(IMAGE_BASE + player_rva(0), 0x03BD_C980);
+        // The default player of FUN_005a2a7b, `&DAT_03bdcbc0`, is slot 1.
+        assert_eq!(IMAGE_BASE + player_rva(1), 0x03BD_CBC0);
+        // X and Z of slot 0 are DAT_03bdca60 and DAT_03bdca68.
+        assert_eq!(IMAGE_BASE + player_rva(0) + PLAYER_POSITION, 0x03BD_CA60);
+        assert_eq!(
+            IMAGE_BASE + player_rva(0) + PLAYER_POSITION + 8,
+            0x03BD_CA68
+        );
+    }
+
+    #[test]
+    fn parses_a_player() {
+        let mut bytes = vec![0u8; PLAYER_READ_LEN];
+        bytes[PLAYER_ID] = 7;
+        bytes[PLAYER_NUMBER] = 9;
+        bytes[PLAYER_TEAM] = 1;
+        for (i, v) in [1200.0f32, 0.0, -800.0].iter().enumerate() {
             bytes[PLAYER_POSITION + 4 * i..PLAYER_POSITION + 4 * i + 4]
                 .copy_from_slice(&v.to_le_bytes());
         }
-        bytes[PLAYER_PHYSICS_PTR..PLAYER_PHYSICS_PTR + 4].copy_from_slice(&physics.to_le_bytes());
-        bytes
+        let p = Player::parse(3, &bytes).unwrap();
+        assert_eq!((p.slot, p.id, p.number, p.team), (3, 7, 9, 1));
+        assert_eq!(p.position, [1200.0, 0.0, -800.0]);
+        assert!(Player::parse(3, &bytes[..10]).is_none());
     }
 
     #[test]
-    fn accepts_a_player_on_the_pitch() {
-        assert!(looks_like_player(&player(1200.0, 0.0, -800.0, 0x0a00_1000)));
-    }
-
-    #[test]
-    fn rejects_implausible_structs() {
-        assert!(!looks_like_player(&player(0.0, 0.0, 0.0, 0x0a00_1000)));
-        assert!(!looks_like_player(&player(1e9, 0.0, 0.0, 0x0a00_1000)));
-        assert!(!looks_like_player(&player(f32::NAN, 0.0, 0.0, 0x0a00_1000)));
-        assert!(!looks_like_player(&player(100.0, 0.0, 0.0, 0)));
-        assert!(!looks_like_player(&player(100.0, 0.0, 0.0, 0x0a00_1002)));
-        assert!(!looks_like_player(&[0u8; 16]));
-    }
-
-    fn with_distance(mut bytes: Vec<u8>, distance: f32) -> Vec<u8> {
-        bytes[PLAYER_BALL_DISTANCE..PLAYER_BALL_DISTANCE + 4]
-            .copy_from_slice(&distance.to_le_bytes());
-        bytes
-    }
-
-    #[test]
-    fn recognises_the_form_of_the_ball_distance() {
-        let ball = [0.0, -28.0, 0.0];
-        let p = player(3000.0, 0.0, 4000.0, 0x0a00_1000);
-        assert_eq!(
-            ball_distance_form(&with_distance(p.clone(), 5000.0), ball),
-            Some(DistanceForm::Xyz)
-        );
-        assert_eq!(
-            ball_distance_form(&with_distance(p.clone(), 25_000_000.0), ball),
-            Some(DistanceForm::XyzSquared)
-        );
-        assert_eq!(
-            ball_distance_form(&with_distance(p.clone(), 1234.0), ball),
-            None
-        );
-        assert_eq!(ball_distance_form(&with_distance(p, 0.0), ball), None);
-    }
-
-    #[test]
-    fn finds_the_array_of_players() {
-        // 22 players every 0x6a0 bytes, plus noise.
-        let mut candidates: Vec<usize> = (0..22).map(|i| 0x0100_0000 + i * 0x6a0).collect();
-        candidates.extend([0x0090_0000, 0x0100_0010, 0x0200_0000]);
-        candidates.sort_unstable();
-        let runs = find_runs(&candidates, 0x2000, 11);
-        assert_eq!(
-            runs,
-            vec![Run {
-                start: 0x0100_0000,
-                stride: 0x6a0,
-                count: 22
-            }]
-        );
-    }
-
-    #[test]
-    fn short_runs_are_ignored() {
-        let candidates: Vec<usize> = (0..5).map(|i| 0x1000 + i * 0x100).collect();
-        assert!(find_runs(&candidates, 0x1000, 11).is_empty());
+    fn positions_on_the_pitch_are_plausible() {
+        assert!(plausible_position([3458.4, -28.0, 4051.2]));
+        assert!(!plausible_position([1e9, 0.0, 0.0]));
+        assert!(!plausible_position([f32::NAN, 0.0, 0.0]));
     }
 }

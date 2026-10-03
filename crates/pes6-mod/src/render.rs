@@ -501,8 +501,12 @@ fn log_frame(frame: u64, summary: &FrameSummary) {
         "  matrice des coordonnées logiques : {:?}",
         summary.logic_world()
     ));
-    if let Some(players) = game::player_positions() {
-        log(&format!("  joueurs : {players:?}"));
+    for p in game::players() {
+        let [x, y, z] = p.position;
+        log(&format!(
+            "    emplacement {:2} : id {:3}, équipe {}, n° {:2}, pos ({x:9.1}, {y:7.1}, {z:9.1})",
+            p.slot, p.id, p.team, p.number
+        ));
     }
     let identity = summary
         .objects
@@ -659,16 +663,21 @@ unsafe fn draw_mod(
             set_pixel_shader(device, 0);
 
             if let Some(camera) = camera.filter(|c| c.primitives >= MIN_SCENE_PRIMITIVES) {
-                game::on_match_frame();
                 let world: Vec<WorldVertex> = marker::marker([0.0; 3]);
-                let ball = logic_world.and_then(|_| {
-                    let mut pins = marker::pin(game::ball_position()?, pes::LOGIC_UNITS_PER_METRE);
-                    for player in game::player_positions().unwrap_or_default() {
-                        if pes::plausible_position(player) {
-                            pins.extend(marker::flag(player, pes::LOGIC_UNITS_PER_METRE));
+                let ball = logic_world.map(|_| {
+                    let mut pins = game::ball_position()
+                        .map(|ball| marker::pin(ball, pes::LOGIC_UNITS_PER_METRE))
+                        .unwrap_or_default();
+                    for player in game::players() {
+                        if pes::plausible_position(player.position) && player.position != [0.0; 3] {
+                            pins.extend(marker::flag(
+                                player.position,
+                                pes::LOGIC_UNITS_PER_METRE,
+                                marker::team_color(player.team),
+                            ));
                         }
                     }
-                    Some(pins)
+                    pins
                 });
                 set_transform(device, D3DTS_WORLD, &scene::IDENTITY);
                 set_transform(device, D3DTS_VIEW, &camera.view);
